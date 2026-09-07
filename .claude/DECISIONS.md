@@ -299,7 +299,10 @@ documentation was right.
 **Rebutted — the `# nosec B608` in `appdb.users.get_by_email` is NOT a no-op.** The round reported
 it as a dead suppression protecting nothing, citing bandit's "nosec encountered … but no failed
 test" line, and recommended removing it. Removed and measured: `bandit -r src/ -ll` goes from
-1 medium to 2 and **exits 1** — the `python-security` gate turns red. The suppression is
+no reported issues to one Medium-severity B608 at `src/appdb/users.py:250`, and its exit code
+from 0 to 1 — the `python-security` gate turns red, and CI's `security-scan` job with it. (The
+first version of this sentence said "1 medium to 2", reading bandit's *by confidence* tally as a
+severity count. Corrected; the exit-code claim was always the load-bearing one.) The suppression is
 load-bearing. Restored. The finding was wrong, and only running it showed that; this is the second
 recommendation in two rounds that did not survive measurement (the other proposed a private-IP
 check reported as near-zero false positives, measured at seven).
