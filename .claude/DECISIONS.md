@@ -246,14 +246,16 @@ the phrasings-only version passed.
    repository. One independent catch does not carry a permanent gate.
 3. *It never covered the class, and a partial gate on a "never do X" rule is worse than none.*
    Bare hostnames, IP literals, non-ASCII labels and every TLD outside a fixed set passed it. A
-   private-range IP check was written and measured at seven false positives in this tree — the
-   `10.0.0.0/8` CIDR example in `README.md`'s own `SEARCH_FORWARDED_ALLOW_IPS` row, and fixture
-   client addresses in the throttle and session tests — so that shape cannot be checked mechanically
-   here at all. Twice the gate was declared to cover the class while covering half, which is the
+   private-range IP check was written and measured at seven false positives in this tree, across
+   four files: the `10.0.0.0/8` CIDR example in `README.md`'s own `SEARCH_FORWARDED_ALLOW_IPS`
+   row, the same literal in `tests/unit/common/test_config_search.py`, and fixture client
+   addresses in `tests/unit/search/test_login_throttle.py` and
+   `tests/unit/search/test_sessions_lifecycle.py`. Nothing separates a documentation example from
+   a real host at that shape, so it cannot be checked mechanically here at all. Twice the gate was declared to cover the class while covering half, which is the
    *same* false-completeness defect it existed to prevent, one level up.
-4. *It cost more than it returned.* Three of the six commits on the branch that introduced it, and
-   two full adversarial review rounds, went to the gate rather than to the feature. Rounds 4, 5 and
-   6 each found defects in the gate itself; none found a defect in the auth change it was guarding.
+4. *It cost more than it returned.* Three of the six commits then on the branch were wholly gate
+   work, and rounds 4, 5 and 6 each found defects in the gate itself — none found a defect in the
+   auth change it was guarding.
 
 **What replaces it.** Nothing mechanical, deliberately. `.claude/memory/review-lessons.md` carries
 the lesson as a live control and now warns against the failure that sank the gate: sweep for the
@@ -264,6 +266,47 @@ higher-severity class.
 
 **What is kept.** Every instance the gate found stays corrected: the restated comments and
 docstrings across `src/`, `tests/` and `CODE_GUIDELINES.md`, the hostname removed from
-`src/search/mcp_server.py`, and the branch history rewritten so no commit message carries the
-phrasings. Removing the check does not un-fix what it found.
+`src/search/mcp_server.py`, and the branch history rewritten so that no commit message describes
+the deployment. (Not the same as "matches none of the gate's patterns": this entry's own commit
+says "on the repository owner's instruction", which the removed phrase list would have flagged.
+It describes repository governance, not an installation, and the substantive claim is the one
+that matters.) Removing the check does not un-fix what it found.
+
+**Reading this after the fact.** The branch history was rebuilt from its final tree before it was
+ever pushed, so the commits and files this entry describes — the gate script, its test, the six
+commits — exist in no published commit. The record is here because the history deliberately does
+not carry it.
 **Affects:** `.claude/GATES.md`, `.claude/INDEX.md`, `.claude/memory/review-lessons.md`, `.claude/gates/no-deployment-prose.py` (deleted), `tests/unit/test_no_deployment_prose_gate.py` (deleted)
+
+## 2026-09-07 — Round-7 minors: what was fixed, and two rebuttals
+
+The seventh adversarial round returned SHIP with seven minors. Recorded here because the loop
+rule is that nothing reported is silently dropped.
+
+**Fixed.** The removal entry above understated its own false-positive measurement (four files, not
+three — `tests/unit/common/test_config_search.py` carries the same `10.0.0.0/8` literal); gave two
+different round counts in one paragraph; asserted "no commit message carries the phrasings" when
+the docs commit says "on the repository owner's instruction", which the removed phrase list would
+have matched; and cited a script, a test and six commits that exist in no published commit without
+saying the history had been rebuilt. All corrected in place.
+
+`src/common/config/_loader.py`'s docstring claimed `APP_DB_PATH` and `INDEX_DB_PATH` are "never
+read from the table". Only `APP_DB_PATH` is enforced — it is re-injected after the merge. `stored`
+is merged unfiltered, so a hand-inserted `INDEX_DB_PATH` row *would* win, which is what
+`docs/configuration.md` now says. The docstring contradicted shipped documentation and the
+documentation was right.
+
+**Rebutted — the `# nosec B608` in `appdb.users.get_by_email` is NOT a no-op.** The round reported
+it as a dead suppression protecting nothing, citing bandit's "nosec encountered … but no failed
+test" line, and recommended removing it. Removed and measured: `bandit -r src/ -ll` goes from
+1 medium to 2 and **exits 1** — the `python-security` gate turns red. The suppression is
+load-bearing. Restored. The finding was wrong, and only running it showed that; this is the second
+recommendation in two rounds that did not survive measurement (the other proposed a private-IP
+check reported as near-zero false positives, measured at seven).
+
+**Rebutted — the two `BREAKING CHANGE:` footers in the feature commit stay.** `CODE_GUIDELINES.md`
+§16.1 speaks of *a* footer, and consolidating them is a formatting improvement that would cost
+another history rewrite of an already-rewritten branch. Both breaks — the `/api/index/*` RBAC move
+and the registry move — are stated explicitly and neither is hidden. Not worth re-orphaning the
+KB stamps a third time, which is a defect this branch has already produced twice.
+**Affects:** `.claude/DECISIONS.md`, `src/common/config/_loader.py`

@@ -35,9 +35,13 @@ def load_settings(app_db_path: str) -> Settings:
     deployment previously configured with environment variables keeps working
     with no change and its settings become editable in the Settings screen.
 
-    The two bootstrap variables ``APP_DB_PATH`` and ``INDEX_DB_PATH`` are
-    never read from the table — they tell the process where its databases
-    live, so they stay environment-only.
+    ``APP_DB_PATH`` and ``INDEX_DB_PATH`` are *bootstrap* variables: they tell
+    the process where its databases live, so nothing writes them to the table —
+    ``seed_from_env`` seeds only ``CONFIG_KEYS`` and ``PUT /api/settings``
+    rejects anything outside it. Only ``APP_DB_PATH`` is also *enforced*: it is
+    re-injected after the merge below, so a row could not repoint it. A row
+    inserted into ``config`` by hand — which needs direct database access —
+    would win for ``INDEX_DB_PATH``, because ``stored`` is merged unfiltered.
 
     Args:
         app_db_path: Filesystem path to ``app.db``. Comes from the
