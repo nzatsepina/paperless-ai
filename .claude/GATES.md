@@ -174,3 +174,5 @@ Use these ONLY for assertions no exit code can express. None declared yet. -->
 <!-- One line per retired id, at column 0: `- <id> — <YYYY-MM-DD>` where the
 date is the DECISIONS.md entry recording the removal. An id listed here can
 never be reused. Gate stanzas may not appear below this heading. -->
+
+- no-deployment-prose — 2026-09-07

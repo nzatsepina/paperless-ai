@@ -8,7 +8,11 @@ Configuration lives in a database, not a file. The values sit in the **applicati
 
 You can still set values as **environment variables** — they seed the database on first run and act as a fallback — but the database always wins once a value is set there.
 
-Two settings are the exception. `APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap* variables: they tell each process where its databases live, so they cannot themselves live in a database. They stay environment variables. See [Application & Index Databases](#application--index-databases).
+Four settings are the exception, for two different reasons.
+
+`APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap* variables: they tell each process where its databases live, so they cannot themselves live in a database. See [Application & Index Databases](#application--index-databases).
+
+`SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD` are *trust* variables: they name the Cloudflare Access team and application whose signed assertions the search server will accept as proof of who someone is. Putting them in the config table would let anyone who can reach `PUT /api/settings` repoint who the application trusts, so they are read straight from the environment and are absent from the table by design. See [Search Server](#search-server).
 
 ## What you actually need to set
 
@@ -60,7 +64,14 @@ these settings with a re-index note.
 
 The variable names in the tables below are the keys used in the `config`
 table and as environment-variable names; the descriptions and defaults are
-the reference for every setting.
+the reference for every setting. The four exceptions named above are environment-variable
+names only. Nothing writes them to the `config` table: `PUT /api/settings`
+accepts only catalogue keys, and first-run seeding copies only those. The two
+`SEARCH_ACCESS_*` variables are read straight from the environment and never
+consulted in the table at all, so no row can repoint them. `INDEX_DB_PATH` is
+the exception to the exception — it is resolved through the same merge as
+every other setting, so a row inserted into `config` by hand (which needs
+direct database access) *would* win over the environment.
 
 ---
 
@@ -265,6 +276,8 @@ binds, how long sessions last, the models it uses, and how hard it reasons.
 | `SEARCH_SERVER_HOST` | Interface to bind. `0.0.0.0` is deliberate — the server is auth-gated; restrict exposure at the reverse proxy. | `0.0.0.0` |
 | `SEARCH_SERVER_PORT` | TCP port to listen on (1–65535). | `8080` |
 | `SEARCH_FORWARDED_ALLOW_IPS` | Which peers uvicorn trusts `X-Forwarded-For/-Proto` from. Pin to the proxy CIDR if the uvicorn port is directly reachable. | `*` |
+| `SEARCH_ACCESS_TEAM_DOMAIN` | Your **Cloudflare Access team domain** (the authentication domain), e.g. `your-team.cloudflareaccess.com` — **not** the hostname this application is served on. The key set is fetched from `https://<this>/cdn-cgi/access/certs` and the assertion's issuer must equal `https://<this>`; a wrong value fails closed and nothing authenticates. **Cloudflare Access is the only issuer supported today** — both that key-set path and the `Cf-Access-Jwt-Assertion` header are Cloudflare's, so another identity-aware proxy needs code, not configuration. **Env-only** — never read from the config table, so `PUT /api/settings` cannot repoint who the application trusts. Together with `SEARCH_ACCESS_AUD` this enables the third credential kind; leave either unset and authentication behaves exactly as it did before. See [search.md](search.md#authentication). | *(unset)* |
+| `SEARCH_ACCESS_AUD` | The **Application Audience (AUD) tag** of the Access application protecting this deployment, copied from that application in the Cloudflare Zero Trust dashboard. Verified on every request, so an assertion minted for a *different* application in the same Access account is refused. **Env-only**, for the same reason as above. Required alongside `SEARCH_ACCESS_TEAM_DOMAIN`. | *(unset)* |
 | `SEARCH_SESSION_TTL` | Lifetime of the "keep me signed in" Web-UI session cookie, in seconds. An un-ticked login gets a fixed 8-hour session. | `604800` |
 | `SEARCH_MAX_CONCURRENT` | Max in-flight `/api/search` requests (abuse/cost guard). `0` = unlimited. | `4` |
 | `SEARCH_KEY_DAILY_TOKEN_QUOTA` | Per-API-key cumulative LLM-token cap per UTC day across the LLM search endpoints (`/api/search`, `/api/search/stream`, the MCP `deep_search` tool). `0` (the default) = unlimited (disabled). A positive value caps an individual API key's daily spend: once a key's tokens-used-today reaches the quota, further search requests are rejected (HTTP 429 with `Retry-After` to the next UTC midnight on REST; an error on MCP) until the UTC day rolls over. The free MCP `semantic_search` tool makes no LLM call and records no tokens, but a key already over its cap is still refused (shared dispatch). Cookie/browser users are **not** limited — the cap targets programmatic keys. It is a **soft** cap: usage is recorded after each query, so concurrent queries can each pass the check and slightly overshoot. With the default `0`, the search path does **no** quota-related database I/O. | `0` |

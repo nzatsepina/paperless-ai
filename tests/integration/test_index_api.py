@@ -206,9 +206,24 @@ def test_rebuild_also_touches_the_reconcile_sentinel(index_env) -> None:
 # --- RBAC ------------------------------------------------------------------
 
 
-def test_readonly_user_can_view_the_status(index_env) -> None:
-    """A Read-only user may view operational state."""
+def test_readonly_user_cannot_view_the_status(index_env) -> None:
+    """Operational state is admin-only.
+
+    Changed deliberately, not to make a gate pass: daemon heartbeats,
+    reconcile history and the failed-document list are operational state, and
+    the requirement is now that administrators alone see them. This test
+    previously asserted the opposite because that was the previous
+    requirement.
+    """
     client = _viewer_client(index_env)
+    assert client.get("/api/index/status").status_code == 403
+    assert client.get("/api/index/activity").status_code == 403
+    assert client.get("/api/index/failed").status_code == 403
+
+
+def test_admin_can_view_the_status(index_env) -> None:
+    """An admin still sees everything the read-only user no longer does."""
+    client = _admin_client(index_env)
     assert client.get("/api/index/status").status_code == 200
     assert client.get("/api/index/activity").status_code == 200
     assert client.get("/api/index/failed").status_code == 200

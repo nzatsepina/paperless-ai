@@ -7,9 +7,12 @@ Four endpoints (web-redesign spec §5, Wave 6):
 - ``GET  /api/index/failed``   — documents the indexer has failed to index.
 - ``POST /api/index/rebuild``  — the destructive index rebuild.
 
-RBAC (spec §4.3): the three reads require Read-only or above — viewing
-operational state is a read capability; the rebuild requires admin — it is
-destructive. The dependencies are Wave 1's :mod:`search.deps`.
+RBAC: all four routes require admin. Daemon heartbeats, reconcile history and
+the failed-document list are operational state rather than archive data, and a
+deployment may reasonably restrict them to administrators; the rebuild was
+already admin-only because it is destructive. This supersedes the original
+Read-only+ reads (spec §4.3). The
+dependencies are Wave 1's :mod:`search.deps`.
 
 The handlers are thin: status/health shaping is :mod:`search.index_service`,
 ``daemon_status`` / ``reconcile_activity`` I/O is :mod:`appdb`, the
@@ -37,7 +40,7 @@ import structlog
 from fastapi import APIRouter, Depends
 
 from appdb import daemon_status, reconcile_activity
-from search.deps import get_app_db, require_admin, require_api_scope
+from search.deps import get_app_db, require_admin
 from search.index_sentinel import request_index_rebuild
 from search.index_service import overall_health, resolve_daemon_statuses
 from search.wire import (
@@ -69,11 +72,23 @@ def build_index_router(settings: Settings, store_reader: StoreReader) -> APIRout
         store_reader: The read-side store, backing the failed-document list.
 
     Returns:
-        A configured :class:`~fastapi.APIRouter`. The three GETs require
-        Read-only+, the rebuild POST requires admin.
+        A configured :class:`~fastapi.APIRouter`. All four routes require
+        admin — note this also excludes any key carrying only the ``api``
+        scope, since ``require_admin`` demands the ``admin`` scope too.
     """
     router = APIRouter()
-    read_access = Depends(require_api_scope)
+    # Admin-only, deliberately: daemon heartbeats, reconcile history and the
+    # failed-document list are operational state, not archive data, and a
+    # deployment may reasonably want them visible to administrators alone.
+    # This is a requirement change, not a test-driven one -- see
+    # .claude/specs/20260906-verified-proxy-identity.md ("Breaking change")
+    # and .claude/DECISIONS.md, 2026-09-06.
+    #
+    # Note the blast radius beyond people: this also revokes access for any
+    # API key carrying only the `api` scope, admin-owned ones included, since
+    # require_admin demands the `admin` scope as well as the role. A polling
+    # monitor on /api/index/status must be re-issued a key with `admin` scope.
+    read_access = Depends(require_admin)
 
     @router.get("/api/index/status", dependencies=[read_access])
     def index_status(

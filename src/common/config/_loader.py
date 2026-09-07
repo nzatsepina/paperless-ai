@@ -35,9 +35,13 @@ def load_settings(app_db_path: str) -> Settings:
     deployment previously configured with environment variables keeps working
     with no change and its settings become editable in the Settings screen.
 
-    The two bootstrap variables ``APP_DB_PATH`` and ``INDEX_DB_PATH`` are
-    never read from the table — they tell the process where its databases
-    live, so they stay environment-only.
+    ``APP_DB_PATH`` and ``INDEX_DB_PATH`` are *bootstrap* variables: they tell
+    the process where its databases live, so nothing writes them to the table —
+    ``seed_from_env`` seeds only ``CONFIG_KEYS`` and ``PUT /api/settings``
+    rejects anything outside it. Only ``APP_DB_PATH`` is also *enforced*: it is
+    re-injected after the merge below, so a row could not repoint it. A row
+    inserted into ``config`` by hand — which needs direct database access —
+    would win for ``INDEX_DB_PATH``, because ``stored`` is merged unfiltered.
 
     Args:
         app_db_path: Filesystem path to ``app.db``. Comes from the
@@ -77,14 +81,17 @@ def load_settings(app_db_path: str) -> Settings:
 
     # Merge: the environment first, the config table layered on top — so a
     # config-table value overrides an environment value. The bootstrap
-    # variables are environment-only, so they survive from os.environ; they
-    # are never in `stored` because seed_from_env only seeds CONFIG_KEYS.
+    # variables normally survive from os.environ: nothing the application
+    # writes puts them in `stored`, because seed_from_env seeds only
+    # CONFIG_KEYS and PUT /api/settings rejects the rest. `stored` is the
+    # whole table though, so a row inserted by hand WOULD win for
+    # INDEX_DB_PATH. APP_DB_PATH is re-forced below and cannot be moved.
     merged: dict[str, str] = dict(os.environ)
     merged.update(stored)
-    # The bootstrap variables are never in the config table, but app_db_path
-    # is known explicitly here — inject it so _build_settings resolves
-    # Settings.APP_DB_PATH to the path the caller actually used, regardless
-    # of whether APP_DB_PATH is set in the environment.
+    # Nothing writes the bootstrap variables to the config table, but
+    # app_db_path is known explicitly here — inject it so _build_settings
+    # resolves Settings.APP_DB_PATH to the path the caller actually used,
+    # regardless of whether APP_DB_PATH is set in the environment.
     merged["APP_DB_PATH"] = app_db_path
     return _build_settings(merged)
 
@@ -267,9 +274,11 @@ def _merge_environment(
 
     Mirrors the merge :func:`load_settings` performs, factored out so the
     hot-load fast path can reuse it without re-opening ``app.db``: the table
-    value wins over an environment value, the bootstrap variables stay
-    environment-only, and ``APP_DB_PATH`` is forced to the *app_db_path* the
-    caller resolved (it is never in the table).
+    value wins over an environment value, and ``APP_DB_PATH`` is forced to the
+    *app_db_path* the caller resolved, so no row can repoint it. The bootstrap
+    variables are environment-only by convention rather than by filtering:
+    *config_table* is merged whole, so a hand-inserted ``INDEX_DB_PATH`` row
+    would win here exactly as it does in :func:`load_settings`.
     """
     merged: dict[str, str] = dict(os.environ)
     merged.update(config_table)

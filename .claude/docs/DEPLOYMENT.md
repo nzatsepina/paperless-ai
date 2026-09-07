@@ -49,8 +49,8 @@ Runtime env baked in: `VIRTUAL_ENV=/opt/venv` (prepended to `PATH`), `FRONTEND_D
 | `security-scan` | `bandit -r src/ -ll -f txt` (pinned `bandit[toml]==1.9.4`) |
 | `dependency-audit` | `pip-audit` over the installed env (no lockfile) |
 | `frontend` | Node 22, working-dir `web`: `npm ci` → `npm audit --omit=dev --audit-level=high` → `typecheck` → `lint` → `test:coverage` → `build` |
-| `docker` | Matrix `linux/amd64` (ubuntu-latest) + `linux/arm64` (ubuntu-24.04-arm) — **native runners, no QEMU**; both build with `RUN_TESTS=0`; PRs build only, `main` pushes by digest. Needs all five check jobs |
-| `docker-merge` | Push-only. `docker buildx imagetools create` → `:latest` + `:sha-<GITHUB_SHA>` multi-arch manifest on Docker Hub, image name `${{ secrets.DOCKERHUB_USERNAME }}/paperless-ai` (published as `rossetv/paperless-ai` — the image name in `README.md`'s docker-run quick-start) |
+| `docker` | Matrix `linux/amd64` (ubuntu-latest) + `linux/arm64` (ubuntu-24.04-arm) — **native runners, no QEMU**; both build with `RUN_TESTS=0`; PRs build only; `main` and `workflow_dispatch` push by digest. Needs all five check jobs |
+| `docker-merge` | Not on PRs (`push` to main or `workflow_dispatch`). `docker buildx imagetools create` → `:sha-<GITHUB_SHA>` always, **plus `:latest` only when `IS_MAIN_PUSH`** (`github.event_name == 'push' && github.ref == 'refs/heads/main'`) so a branch dispatch cannot move `:latest`. Registry `ghcr.io/<github.repository>`, lowercased by the `Normalise the registry path` step; auth is `GITHUB_TOKEN` + `packages: write`, no registry secret |
 | `cloudflare-refresh` | Dev-mode + purge, push on the canonical repo only (`github.repository == 'rossetv/paperless-ai'`); each call retried 3× |
 
 Provenance/SBOM attestations are deliberately disabled on both docker jobs (they break the push-by-digest → imagetools flow).
@@ -59,7 +59,7 @@ Provenance/SBOM attestations are deliberately disabled on both docker jobs (they
 
 1. **Build the image locally** — `docker build -t paperless-ai .` (runs the test suite inside the build; `--build-arg RUN_TESTS=0` skips it).
 2. **First run** — start the search server and read the one-time setup token from its log (WARNING, event `search.setup_mode`, in the `is_setup_needed` block of `src/search/api.py`), then open `/setup` in the SPA to create the first admin. The token lives only in memory — a restart before setup completes mints a new one.
-3. **Deploy** — a push to `main` runs the full CI lane and publishes `rossetv/paperless-ai:latest` (+ a `sha-<GITHUB_SHA>` tag) as a multi-arch manifest on Docker Hub.
+3. **Deploy** — a push to `main` runs the full CI lane and publishes `ghcr.io/<owner>/paperless-ai:latest` (+ `:sha-<GITHUB_SHA>`) as a multi-arch manifest. To ship an unmerged branch, run the workflow manually on it: that publishes `:sha-<GITHUB_SHA>` only. A new GHCR package is private until its visibility is changed once, so the pulling host needs `read:packages` otherwise.
 4. **Reverse proxy** — run uvicorn behind the proxy and keep its port unreachable from anywhere else. `SEARCH_FORWARDED_ALLOW_IPS` defaults to `*` (uvicorn trusts `X-Forwarded-For`/`-Proto` from any peer; `src/search/api.py::main`, `forwarded_allow_ips`); pin it to the proxy CIDR if that port can be reached directly.
 
 ## Failure modes

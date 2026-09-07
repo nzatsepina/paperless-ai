@@ -41,10 +41,10 @@ export const Default: Story = {
   },
 };
 
-/** Three tabs — Settings omitted for a non-admin user. */
+/** Non-admin tabs — Index and Settings are both admin-only. */
 export const NonAdmin: Story = {
   args: {
-    items: ALL_TABS.filter((t) => t.to !== '/settings'),
+    items: ALL_TABS.filter((t) => t.to !== '/settings' && t.to !== '/index'),
   },
   decorators: [
     (Story) => (

@@ -2,7 +2,7 @@
  * Index page — the `/index` route host.
  *
  * Thin `pages`-tier composition: `Page` shell → `AppNavBar` → `IndexScreen`.
- * Authentication is enforced one level up by `ProtectedRoute` in `routes.tsx`;
+ * Access is enforced one level up by `RequireAdmin` in `routes.tsx`;
  * this host renders unconditionally. The destructive rebuild-index control
  * inside `IndexScreen` is itself admin-gated.
  *

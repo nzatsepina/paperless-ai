@@ -132,12 +132,14 @@ The API is FastAPI on uvicorn. Pydantic models validate requests and responses a
 The "Auth" column below names the access level each endpoint requires:
 
 - **None** — unauthenticated.
-- **Session** — a signed-in browser cookie.
+- **Session** — any authenticated caller at all, resolved through `get_current_user`: a session cookie, a verified proxy assertion, or an API key **whatever its scopes** — an `mcp`-only key included, which every scope-enforced REST route would refuse. `get_current_user` is a bare projection of `resolve_caller`: it applies no role check and no scope check. Only `GET /api/auth/me` and `POST /api/auth/logout` carry this level.
 - **Read-only+** — a logged-in user of role Read-only or above; an API-key caller must also hold the `api` scope.
 - **Member+** — role Member or above; an API key still needs the `api` scope.
 - **Admin** — an admin user; an API key must also hold the `admin` scope.
 
-These map to the FastAPI dependencies in `search/deps.py` (`require_api_scope`, `require_api_scope_member`, `require_admin`). The full model is in [Authentication](#authentication) below.
+These map to the FastAPI dependencies in `search/deps.py` (`require_api_scope`, `require_api_scope_member`, `require_admin`).
+
+A level says *what* a caller must be, never *how* they proved it. **Three credential kinds** can satisfy one: a session cookie, a bearer API key, or — where an identity-aware reverse proxy fronts the application — a verified proxy assertion. A caller resolved from a verified assertion is bounded by their account's role exactly as a cookie caller is, and carries no scopes. The full model is in [Authentication](#authentication) below.
 
 ### Endpoints
 
@@ -166,7 +168,7 @@ These map to the FastAPI dependencies in `search/deps.py` (`require_api_scope`, 
 | `GET·PUT /api/settings`, `POST /api/settings/test-connection` | Admin | Read and update runtime config, test the Paperless connection |
 | `GET·POST·PATCH·DELETE /api/api-keys[/{id}]` | Session / owner / Admin | Mint, list, edit, revoke API keys |
 | `GET /api/users` · `POST` · `PATCH /{id}` · `DELETE /{id}` | Admin | User account management |
-| `GET /api/index/{status,activity,failed}` | Read-only+ | The Index dashboard |
+| `GET /api/index/{status,activity,failed}` | Admin | The Index dashboard |
 | `POST /api/index/rebuild` | Admin | Wipe and re-index the whole archive (202 Accepted) |
 | `GET /` and assets | None | Serve the built React app (with a deep-link catch-all) |
 | `/mcp` | API key (`mcp` scope) / session | The MCP endpoint |
@@ -231,15 +233,15 @@ Authentication is **database-backed user accounts with role-based access control
 
 **First-run setup.** When `app.db` has no users, the server enters *setup mode*: it generates a one-off setup token, logs it to the container (`SETUP TOKEN: … — open /setup to create the first admin account`), and `POST /api/setup` — guarded by a constant-time comparison of that token — creates the first admin. Once any user exists, `/api/setup` returns `409`.
 
-**Sign-in.** `POST /api/auth/login` verifies the username and password (argon2id) and, on success, inserts a row in the `sessions` table and sets an opaque `search_session` cookie. The cookie is `HttpOnly`, `SameSite=Strict`, `Path=/`, and `Secure` over HTTPS (the flag is set when `request.url.scheme` is `https` — correct behind the documented proxy that runs uvicorn with `proxy_headers=True`). Its `Max-Age` is `SEARCH_SESSION_TTL` (default seven days) when "keep me signed in" is ticked, eight hours otherwise. The database stores only the SHA-256 of the token — the raw token is never persisted. `SameSite=Strict` is the CSRF defence; no separate CSRF token is needed.
+**Sign-in.** `POST /api/auth/login` verifies the username and password (argon2id) and, on success, inserts a row in the `sessions` table and sets an opaque `search_session` cookie. The cookie is `HttpOnly`, `SameSite=Strict`, `Path=/`, and `Secure` over HTTPS (the flag is set when `request.url.scheme` is `https` — correct behind the documented proxy that runs uvicorn with `proxy_headers=True`). Its `Max-Age` is `SEARCH_SESSION_TTL` (default seven days) when "keep me signed in" is ticked, eight hours otherwise. The database stores only the SHA-256 of the token — the raw token is never persisted. `SameSite=Strict` is the CSRF defence for this path; no separate CSRF token is needed. It does **not** carry over to the reverse-proxy path below, which is not authenticated by this cookie and so runs its own `Origin` check.
 
-**Every request.** `get_current_user` hashes the cookie token, looks the session up, checks it has not expired, loads the user, and checks the account is active. `last_seen_at` is refreshed at most once every ~5 minutes, so authentication is not a database write on every request. `POST /api/auth/logout` deletes the session row; suspending or deleting a user deletes **all** that user's sessions, so access is revoked instantly — the key advantage of server-side sessions over a stateless token.
+**Every request.** On the cookie path — one of the three below — `resolve_caller` hashes the cookie token, looks the session up, checks it has not expired, loads the user, and checks the account is active. (`get_current_user` is now a thin projection of `resolve_caller`, returning just the identity, so it serves all three paths alike.) `last_seen_at` is refreshed at most once every ~5 minutes, so authentication is not a database write on every request. `POST /api/auth/logout` deletes the session row; suspending or deleting a user deletes **all** that user's sessions, so access is revoked instantly — the key advantage of server-side sessions over a stateless token.
 
 **Roles.** Three roles rank `readonly` < `member` < `admin`:
 
 - Search, facets, stats, and browse need **Read-only** or above.
 - Reconcile, metadata edits, and re-queues need **Member** or above.
-- User management, settings writes, and rebuild need **Admin**.
+- User management, settings writes, the Index dashboard, and rebuild need **Admin**.
 
 Two guards protect administration: a user cannot delete, suspend, or demote themselves, and the last remaining admin cannot be deleted, suspended, or demoted.
 
@@ -249,6 +251,28 @@ Each key carries **scopes**: `api` (the REST data routes), `mcp` (the `/mcp` sur
 
 A key can be given an **expiry** and can be **revoked** at any time; revocation takes effect immediately. The owner can **edit** it — rename it, change its scopes, or change its expiry. Editing is owner-only: an admin may view and revoke other users' keys but not edit them.
 
+**Verified reverse-proxy identity.** Where an identity-aware reverse proxy fronts the application — one that authenticates people itself and forwards a *signed* assertion of who they are — the server can accept that assertion as a third credential kind. **Cloudflare Access is the only issuer supported today**: the header read (`Cf-Access-Jwt-Assertion`) and the key-set path (`/cdn-cgi/access/certs`) are both Cloudflare's, so pointing this at Authelia, oauth2-proxy or Pomerium needs code, not configuration.
+
+It is off unless **both** variables are set and non-empty; unset, authentication behaves exactly as it did before.
+
+| Variable | Value |
+|:---|:---|
+| `SEARCH_ACCESS_TEAM_DOMAIN` | The Access **team** (authentication) domain, e.g. `your-team.cloudflareaccess.com`. **Not** the hostname this application is served on — that mistake fetches something other than the key set from that host, and nothing ever authenticates. |
+| `SEARCH_ACCESS_AUD` | The **Application Audience (AUD) tag** of the Access application protecting this deployment. |
+
+`search/access_jwt.py` fetches the key set from `https://<team-domain>/cdn-cgi/access/certs` and verifies the assertion's signature against it, together with its issuer (`https://<team-domain>`), audience and expiry — the plaintext identity header beside it is never trusted, because only a signature cannot be forged by something that reaches the origin directly. `search/access_identity.py` then resolves the person from the verified email claim.
+
+Four properties bound it:
+
+- **It is tried first**, before the cookie and the bearer key. Were the cookie first, a stale `search_session` would outrank the proxy's identity and let one browser act as another person for that session's lifetime.
+- **It creates nothing.** It matches an *existing* account by email and never provisions one. An address with no account is refused and logged, so who can sign in is bounded by rows an administrator deliberately created — and deleting an account is therefore a real revocation.
+- **It yields** to the other two paths whenever it cannot resolve a person: an invalid assertion, a machine caller (a service-token assertion is validly signed but carries no identity claim), an address with no account, an address held by more than one account, or a suspended account.
+- **It grants no scopes.** A caller resolved this way is bounded by their account's role alone, identical to a cookie session.
+
+One consequence worth knowing: **"sign out" cannot sign an Access caller out.** `POST /api/auth/logout` destroys the *application's* session, which an Access caller normally does not have — `end_session` is a no-op on a missing cookie, so the call returns `204`. Even where a stale `search_session` cookie exists and is duly destroyed, the next request authenticates again from the assertion, because the Access path is tried first. Signing out means signing out of Access (`/cdn-cgi/access/logout`), which is outside this application.
+
+Both variables are read straight from the environment and are deliberately absent from the config table, so `PUT /api/settings` cannot repoint who the application trusts. Because this path is not authenticated by the application's own `SameSite=Strict` cookie, state-changing requests on it carry an explicit `Origin` / `Sec-Fetch-Site` check; a cross-site attempt is refused with `403`.
+
 **`SEARCH_API_KEY` is retired.** The `SEARCH_API_KEY` environment variable is no longer read by the search server (Wave 3). A fresh install has no programmatic or MCP access until an account is created and a key is minted — there is no default credential.
 
 **Security response headers.** A global middleware (`search/security_headers.py`) stamps a conservative, SPA-safe header set onto every response — the API routers, the MCP mount, and the static SPA alike: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security` (one year, `includeSubDomains`), and an **enforcing** `Content-Security-Policy`. The CSP is `default-src 'self'` with `frame-ancestors 'none'`, `base-uri 'self'`, `object-src 'none'`, and `connect-src`/`img-src`/`font-src` scoped to same-origin (plus `data:` images). `script-src` and `style-src` allow `'unsafe-inline'` because the built `index.html` carries one inline theme-bootstrap script and the Vite/React runtime injects `<style>` elements — a stricter policy would blank the app, and the bundle uses no `eval`. This is defence-in-depth: the real auth lives in the routers; the headers shrink the blast radius of a mistake elsewhere.
@@ -257,14 +281,15 @@ A key can be given an **expiry** and can be **revoked** at any time; revocation 
 
 ## React web UI
 
-The frontend (`web/`) is a React + Vite + TypeScript single-page app. It is built in a Node stage of the multi-stage Dockerfile and copied into the final image, which serves `web/dist` at `/`. It is structured as a strict layer stack (`components/` → `features/` → `pages/`) with all design values in `tokens.css` — see `CODE_GUIDELINES.md` §12. All API state goes through the typed `web/src/api/` layer, which sends `credentials: 'include'` so the `HttpOnly` session cookie carries authentication; the JavaScript bundle never sees a credential.
+The frontend (`web/`) is a React + Vite + TypeScript single-page app. It is built in a Node stage of the multi-stage Dockerfile and copied into the final image, which serves `web/dist` at `/`. It is structured as a strict layer stack (`components/` → `features/` → `pages/`) with all design values in `tokens.css` — see `CODE_GUIDELINES.md` §12. All API state goes through the typed `web/src/api/` layer, which sends `credentials: 'include'` so the `HttpOnly` session cookie carries authentication — or, behind an identity-aware reverse proxy, so the proxy's own assertion does. Either way the JavaScript bundle never sees a credential.
 
 The main screens:
 
 - **Setup / Login** — first-run setup against the printed token, then plain username / password sign-in that sets the session cookie (no client-side key handling).
 - **Search** — a search bar and filter controls (populated from `/api/facets`), an answer card (the synthesised answer with clickable `[n]` citations), and a list of source documents, plus a transparency line showing the plan and stats from the result.
 - **Library** — a paginated document browse (`/api/documents`) with a detail view (summary, PDF / thumbnail proxy, reclassify / retranscribe / delete).
-- **Settings** — runtime config and connection test; API Keys; Users; and the Index dashboard (daemon status, reconcile activity, failed documents, rebuild).
+- **Settings** (admin only) — runtime config and connection test; API Keys; Users.
+- **Index** (admin only) — the ops dashboard: daemon status, reconcile activity, failed documents, rebuild. Both the `/index` route and its nav link are admin-gated, matching the admin-only `/api/index/*` endpoints behind them.
 
 The app and the API ship inside the same image, so there is no version drift and no API negotiation to do.
 
@@ -330,6 +355,8 @@ For the corruption recovery runbook, see [Store — Corruption Recovery](store.m
 | `auth.py` | Bearer extraction, role ranking, the session-cookie name |
 | `sessions.py` | Opaque session tokens, SHA-256 hashing, the DB-backed session lifecycle |
 | `api_keys.py` | API-key scopes, hashing, and resolution |
+| `access_jwt.py` | Verifies a reverse-proxy assertion — signature against the issuer's key set, plus issuer, audience and expiry — and reads the two env-only `SEARCH_ACCESS_*` variables |
+| `access_identity.py` | Resolves a verified email to an **existing** account, and the cross-site (`Origin` / `Sec-Fetch-Site`) check that path needs |
 | `deps.py` | The FastAPI dependencies — `get_current_user`, `require_api_scope`, `require_api_scope_member`, `require_admin`, `get_app_db` |
 | `setup.py` | First-run setup-token generation, comparison, and setup-mode detection |
 | `login_throttle.py` | The per-username login-attempt throttle |

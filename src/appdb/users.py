@@ -32,6 +32,17 @@ Role = Literal["admin", "member", "readonly"]
 UserStatus = Literal["active", "suspended"]
 
 
+class AmbiguousEmailError(Exception):
+    """Raised when an address identifies more than one account.
+
+    ``users.email`` carries no ``UNIQUE`` constraint, so this is reachable by
+    ordinary data entry. It is a distinct outcome from "no such address", and
+    collapsing the two into ``None`` is a security bug rather than a tidiness
+    one: a caller that provisions on absence would provision on ambiguity too,
+    creating a further account on every request.
+    """
+
+
 class UsernameTakenError(Exception):
     """Raised by :func:`create` when the username is already in use.
 
@@ -191,6 +202,59 @@ def get_by_username(conn: sqlite3.Connection, username: str) -> User | None:
         (username,),
     ).fetchone()
     return _row_to_user(row) if row is not None else None
+
+
+def get_by_email(conn: sqlite3.Connection, email: str) -> User | None:
+    """Return the sole user whose email matches *email*, or ``None``.
+
+    The comparison is done **in Python**, on both sides, with
+    :meth:`str.lower`. SQLite's ``lower()`` is ASCII-only, so a SQL-side fold
+    would disagree with a Python-side one on any non-ASCII address —
+    ``MÜLLER@x`` would miss its own row and, on a credential path, provision a
+    shadow account beside it. One folding implementation applied to both sides
+    is the only way that cannot drift, and the table is small enough that
+    scanning it costs nothing.
+
+    **Not** :meth:`str.casefold`. Casefolding exists to over-merge for caseless
+    *matching*: it maps ``straße`` to ``strasse`` and ``ſam`` to ``sam``, which
+    are different mailboxes. Merging them on a credential path would resolve
+    one person's assertion onto another person's row. ``lower()`` still handles
+    the case this exists for — ``MÜLLER@x`` matches ``müller@x``.
+
+    An empty or ``NULL`` stored email never matches, whatever *email* is: the
+    column is nullable and unconstrained, so most rows may carry no address,
+    and a blank-matches-blank lookup would hand one account to anybody.
+
+    ``email`` carries no ``UNIQUE`` constraint, so two rows *can* hold the same
+    address — an ordinary data-entry mistake. **That case raises**; it does not
+    return ``None``, and a caller must not read it as "no such address".
+    Collapsing the two destroys the distinction every caller needs: one that
+    acts on absence would act on ambiguity too. That is not hypothetical — it
+    shipped once, and created a new account on every request until the address
+    resolved to a different row each time.
+
+    Args:
+        conn: An open ``app.db`` connection.
+        email: The address to look up. Empty or blank returns ``None``.
+
+    Returns:
+        The unique matching :class:`User`, or ``None`` when **none** matches.
+
+    Raises:
+        AmbiguousEmailError: more than one account holds *email*.
+    """
+    wanted = email.strip().lower()
+    if not wanted:
+        return None
+    rows = conn.execute(
+        f"SELECT {_USER_COLUMNS} FROM users "  # nosec B608 - _USER_COLUMNS is a module constant; no caller input in SQL
+        "WHERE email IS NOT NULL AND email != '' ORDER BY id"
+    ).fetchall()
+    matches = [r for r in rows if str(r["email"]).strip().lower() == wanted]
+    if len(matches) > 1:
+        log.warning("appdb.email_ambiguous", matched=len(matches))
+        raise AmbiguousEmailError(f"{len(matches)} accounts hold that address")
+    return _row_to_user(matches[0]) if matches else None
 
 
 def get_by_id(conn: sqlite3.Connection, user_id: int) -> User | None:

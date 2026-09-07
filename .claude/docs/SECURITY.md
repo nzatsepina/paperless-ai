@@ -19,6 +19,12 @@ once. Unknown fact → omit the section, never guess. -->
 
 SHA-256 (not a slow KDF) is correct for sessions and API keys — both are full-entropy random values, not user-chosen secrets. The legacy shared `SEARCH_API_KEY` is retired (absent from `src/common/config/_catalogue.py`): a fresh install has zero programmatic access until a key is minted.
 
+**Reverse-proxy identity assertion (optional, off by default).** When `SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD` are both set, `resolve_caller` (`src/search/deps.py`) tries a third auth path FIRST, ahead of the cookie and bearer paths: it verifies the signed assertion header a Cloudflare Access-style edge proxy attaches to every request (`src/search/access_jwt.py::verify_access_email` — signature against the team's JWKS, plus issuer/audience/expiry, `PyJWKClient` with a 600 s key-cache window) and, on a verified `email` claim, resolves (`access_identity.access_user`, **matched on `email`**, match-only — it never creates an account — `validate_username` forbids `@`, so an address can never be a username and matching on that column would shadow every real account) a `Caller` with `scopes=None` (bounded by role, like a cookie session — never scope-limited). `verify_access_email` returns `None` — never raises — for an absent/invalid assertion **and** for a valid assertion with no `email` claim (a machine/service-token caller identified by `common_name` instead): both cases fall through to the cookie and bearer paths unchanged, so a machine caller is never silently treated as a person and never bypasses the API-key scope model or its `api_key_id` audit linkage. Both variables unset (the default) disables the branch entirely — cookie and API-key auth are unaffected. The two variables are environment-only, deliberately absent from `CONFIG_KEYS` (`src/common/config/_catalogue.py`): `PUT /api/settings` must not be able to repoint who the application trusts. `access_config()` (`src/search/access_jwt.py`) reads the environment directly rather than building `Settings`, so this auth path cannot be broken by an unrelated missing required variable (e.g. `PAPERLESS_TOKEN`).
+
+**CSRF on this path is not free.** The cookie path's entire defence is `SameSite=Strict` on the application's own cookie (§4.4). This path is not authenticated by that cookie, so that defence does not apply and the proxy's cookie policy is outside this repository's control — a cross-site `<form method=post>` is a simple request that no preflight stops. `access_identity.is_cross_site` therefore refuses state-changing methods carrying a foreign `Origin` or `Sec-Fetch-Site`. Do not remove it because the proxy's cookie looks safe today.
+
+**This credential creates nothing.** An address with no account is refused and logged (`search.access_no_account`), so who can authenticate is bounded by rows an administrator deliberately created, not by a proxy-side policy this repository cannot read — and deleting an account is a real revocation. An earlier revision auto-provisioned; every serious defect found across six review rounds was downstream of it.
+
 ### Authorisation
 
 Roles rank `readonly`(0) < `member`(1) < `admin`(2); an unknown role **and** an unknown requirement both rank −1 and are refused — fail closed (`src/search/auth.py`, `_ROLE_RANK` / `authorise_role`). Scopes are `api` / `mcp` / `admin` (`src/search/api_keys.py`, `SCOPE_API` / `SCOPE_MCP` / `SCOPE_ADMIN`); a key is bounded by **both** its scopes and its owner's *current* role — it can never exceed the owner (`src/search/deps.py`, `_enforce`).
@@ -26,9 +32,9 @@ Roles rank `readonly`(0) < `member`(1) < `admin`(2); an unknown role **and** an 
 | Gate | Role | Key scope | Routes |
 |------|------|-----------|--------|
 | none (public) | — | — | `/api/healthz`, `/api/setup`, `/api/setup/status`, `/api/auth/login`, `/api/stats/public` |
-| `require_api_scope` (`deps.py`) | readonly | `api` | search, search/stream, facets, stats, documents browse + detail, `/pdf`, `/thumb`, recent-searches, taxonomy GET, index status/activity/failed |
+| `require_api_scope` (`deps.py`) | readonly | `api` | search, search/stream, facets, stats, documents browse + detail, `/pdf`, `/thumb`, recent-searches, taxonomy GET |
 | `require_api_scope_member` (`deps.py`) | member | `api` | reconcile, document PATCH, reclassify, retranscribe, taxonomy POST |
-| `require_admin` (`deps.py`) | admin | `admin` | document DELETE, user CRUD, settings GET/PUT/test-connection, index rebuild |
+| `require_admin` (`deps.py`) | admin | `admin` | document DELETE, user CRUD, settings GET/PUT/test-connection, index rebuild, index status/activity/failed |
 | `require_key_management` (`deps.py`) | member (admin lists all keys) | `admin` | `/api/api-keys` CRUD |
 | MCP ASGI middleware (`src/search/mcp_server.py`, `_BearerAuthMiddleware`) | any active session **or** a key with `mcp` scope | `mcp` (key callers) | `/mcp` |
 

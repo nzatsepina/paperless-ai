@@ -348,7 +348,8 @@ describe('AppNavBar', () => {
     expect(within(mobileNav as HTMLElement).getAllByRole('link')).toHaveLength(4);
   });
 
-  it('renders three tabs in the bottom tab bar for a non-admin', () => {
+  it('renders two tabs in the bottom tab bar for a non-admin', () => {
+    // /index joined /settings as admin-only, so a member now sees one fewer.
     mockUseAuth.mockReturnValue({
       user: { ...SAMPLE_USER, role: 'member' },
       role: 'member',
@@ -364,6 +365,6 @@ describe('AppNavBar', () => {
     );
     const mobileNav = container.querySelector('nav[aria-label="Mobile navigation"]');
     expect(mobileNav).not.toBeNull();
-    expect(within(mobileNav as HTMLElement).getAllByRole('link')).toHaveLength(3);
+    expect(within(mobileNav as HTMLElement).getAllByRole('link')).toHaveLength(2);
   });
 });

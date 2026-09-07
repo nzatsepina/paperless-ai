@@ -636,7 +636,7 @@ The authoritative nav link list is the `NAV_LINKS` constant in
 |------|------|-----------|
 | Search | `/` | All authenticated users (`end` match) |
 | Library | `/library` | All authenticated users |
-| Index | `/index` | All authenticated users |
+| Index | `/index` | Admin role only |
 | Settings | `/settings` | Admin role only |
 
 Adding, removing, or renaming a nav link requires editing only `NAV_LINKS`.
@@ -717,13 +717,17 @@ Shared helpers used here live at their promoted homes (§11.1), not inside a fea
 
 ### 13.5 `features/index`
 
+The whole `/index` route is **admin-only** (§12.2): the route is wrapped in
+`RequireAdmin` and its nav link is `adminOnly`. Every component below is
+therefore only ever rendered for an admin.
+
 - `IndexScreen` — ops dashboard: health hero, stat tiles, daemon cards, activity, failed docs.
 - `IndexHealthHero` — coloured health verdict banner.
 - **`StatTile` accent rule** (§2, DD-1): the interactive accent may colour **at most one hero stat per screen**, and it must denote the screen's primary metric — not an arbitrary tile. Here that is "Documents indexed". Every other tile is neutral.
 - `DaemonCard` — per-daemon status card.
 - `ActivityRow` — one reconcile-cycle row in the activity list.
 - `FailedDocumentsPanel` — failed-document list; "Preview" opens `DocumentPreviewScreen`.
-- `RebuildIndexCard` — admin-only destructive rebuild section.
+- `RebuildIndexCard` — the destructive rebuild section.
 
 ### 13.6 `features/settings`
 
@@ -827,6 +831,15 @@ The frontend authenticates with a signed `HttpOnly` session cookie, set by
 triggers `me`-query invalidation → `ProtectedRoute` redirect to `/login`. The
 `sk-pls-…` API keys (REST/MCP) are a separate credential and cannot authenticate
 the browser session.
+
+Behind Cloudflare Access (`SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD`
+both set — the only such issuer supported today), its own signed assertion
+authenticates every request instead, and the person is never sent to `/login` at all — there
+is no `search_session` cookie in that flow. The bundle sees and handles that
+credential no more than it does the cookie. Nothing in the frontend branches on
+which of the two authenticated it: `me` is the single source of identity either
+way, and the admin-gated routes (`/settings`, `/index`) key off the role it
+returns.
 
 ### 14.7 `DocumentPreviewScreen` interface
 

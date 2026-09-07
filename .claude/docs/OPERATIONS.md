@@ -19,7 +19,7 @@ once. Unknown fact → omit the section, never guess. -->
 | Indexer idle beat | Every 30 s during the inter-cycle wait | `src/indexer/daemon/_wait.py` |
 | Heartbeat writes | Best-effort: every `sqlite3.Error` / `OSError` is swallowed at WARNING. A heartbeat must never crash a daemon | `src/common/heartbeat.py` |
 | Reconcile activity log | Append-only in `app.db`, capped at the newest 500 rows — kept out of `index.db` so a Rebuild does not erase it | `src/appdb/reconcile_activity.py` (`_ACTIVITY_CAP`) |
-| Dashboard | `GET /api/index/status` / `/activity` / `/failed` (readonly+) | `src/search/index_routes.py` |
+| Dashboard | `GET /api/index/status` / `/activity` / `/failed` (admin) | `src/search/index_routes.py` |
 
 ### Health
 

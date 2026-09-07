@@ -79,6 +79,8 @@ export function IndexScreen(): React.ReactElement {
           </p>
         </div>
         <div className={styles['header-actions']}>
+          {/* The route is behind RequireAdmin, so every caller here is an
+              admin; kept as defence in depth if the route is ever widened. */}
           {role !== 'readonly' && (
             <Button
               variant="secondary"

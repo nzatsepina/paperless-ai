@@ -58,6 +58,14 @@ You don't have to run all four. OCR plus classification alone enriches documents
 
 The fastest useful setup is the OCR daemon on its own: tag a document, watch the text appear. Add the others once that works.
 
+> **Running a fork?** Every `docker run` and compose snippet below names
+> `rossetv/paperless-ai:latest` — the image the upstream project publishes to
+> Docker Hub. A fork's CI publishes its own image to that fork's GitHub
+> Container Registry instead (`ghcr.io/<owner>/paperless-ai`, `:latest` from
+> `main` and `:sha-<sha>` from any branch built on demand). Pulling the
+> upstream tag will not give you a fork's changes — substitute the fork's
+> image name wherever these examples say `rossetv/paperless-ai:latest`.
+
 ### OCR Daemon
 
 ```bash
@@ -206,11 +214,12 @@ There's no shared password to set — the search server has **no `SEARCH_API_KEY
 2. Open `http://your-host:8080/setup` and complete the first-run setup form, pasting that token to create the first **admin** account. The token is invalidated the moment setup completes.
 3. From then on, sign in with username and password. A successful login sets a signed, `HttpOnly` session cookie that lasts eight hours — or as long as `SEARCH_SESSION_TTL` (default seven days) if you tick "keep me signed in".
 
-There are **two kinds of credential**, one for humans and one for machines:
+There are **three kinds of credential** — two for people, one for machines:
 
 | Surface | Credential |
 |:---|:---|
 | Web UI (browser) | Username/password login → session cookie |
+| Web UI behind **Cloudflare Access** | Access's **signed** assertion (`Cf-Access-Jwt-Assertion`). The server verifies the signature, issuer, audience and expiry, then matches the verified email to an **existing** account — it never creates one. Off unless both `SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD` are set. Cloudflare Access is the only issuer supported today |
 | REST API and MCP | A minted `sk-pls-…` API key, created in the UI under **Settings → API Keys**, sent as `Authorization: Bearer <key>`. Each key carries a subset of the `api` / `mcp` / `admin` scopes |
 
 Admins manage further accounts and API keys from the web UI. Configuration changed in the UI is written to `app.db` and **hot-loads across all four daemons** with no restart. See [docs/search.md](docs/search.md) for the full authentication model.
@@ -260,6 +269,8 @@ The search server has the most dials because the search pipeline has the most st
 | `SEARCH_SERVER_HOST` | string | `0.0.0.0` | Bind address for the search server |
 | `SEARCH_SERVER_PORT` | int | `8080` | Port for the search server |
 | `SEARCH_FORWARDED_ALLOW_IPS` | string | `*` | Peers uvicorn trusts the `X-Forwarded-For` / `X-Forwarded-Proto` headers from. `*` trusts every peer — correct when the search server's port is reachable **only** through your reverse proxy. If that port can be reached directly, pin this to the proxy's IP or CIDR (e.g. `10.0.0.0/8`, or a single `172.18.0.2`): otherwise an attacker reaching the port directly can spoof those headers to forge the client IP recorded in audit logs / sessions and to flip the session-cookie `Secure` flag. Comma-separated for multiple values |
+| `SEARCH_ACCESS_TEAM_DOMAIN` | string | *(unset)* | Your **Cloudflare Access team domain** (the authentication domain), e.g. `your-team.cloudflareaccess.com` — **not** the hostname your application is served on. The server fetches the key set from `https://<this>/cdn-cgi/access/certs` and requires the assertion's issuer to be `https://<this>`, so a wrong value means nothing ever authenticates. Cloudflare Access is the only issuer supported today: the key-set path and the `Cf-Access-Jwt-Assertion` header the server reads are both Cloudflare's. Env-only by design — never read from the config table, so nobody with settings access can repoint who the application trusts |
+| `SEARCH_ACCESS_AUD` | string | *(unset)* | The **Application Audience (AUD) tag** of the Access application protecting this deployment — copy it from that application in the Cloudflare Zero Trust dashboard. Checked on every request, so an assertion minted for a *different* application in the same Access account is refused. Env-only, and required alongside `SEARCH_ACCESS_TEAM_DOMAIN` |
 | `SEARCH_SESSION_TTL` | int | `604800` | Lifetime of the "keep me signed in" session cookie, in seconds. An un-ticked login gets a fixed 8-hour session |
 | `SEARCH_MAX_CONCURRENT` | int | `4` | Maximum concurrent `/api/search` requests |
 | `SEARCH_KEY_DAILY_TOKEN_QUOTA` | int | `0` | Per-API-key cumulative LLM-token cap **per UTC calendar day** across the LLM search endpoints (`/api/search`, `/api/search/stream`, and the MCP `deep_search` tool). `0` (the default) means **unlimited** — the quota is disabled and the search path does **no** extra database I/O. A positive value caps a single API key's daily spend: once a key reaches the quota, further search requests are rejected (HTTP 429 with a `Retry-After` pointing at the next UTC midnight on REST; an error on MCP) until the UTC day rolls over. The free MCP `semantic_search` tool makes no LLM call, so it records no tokens — but a key already over its cap is still refused (it shares the one dispatch path). Cookie/browser (logged-in human) users are **not** limited — the cap targets programmatic keys, the credential a leak exposes. It is a **soft** cap (usage is recorded after each query, so concurrent queries can each pass the check and slightly overshoot) |

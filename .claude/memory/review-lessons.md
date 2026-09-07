@@ -46,7 +46,53 @@ when it sharpens, delete one that stops being true.
   §5.8). A three-or-more positional unpack at the call site is a review finding
   on sight; the module usually already has a frozen dataclass to reach for.
 
+## Mutation testing
+
+- **A spy test asserts a value; it does not pin a behaviour.** The Access
+  round's own example: `test_the_issuer_is_derived_from_the_configured_team`
+  spied on the `issuer=` argument and asserted it equalled the configured team
+  — but every call in the file passed the *same* team, so replacing the
+  expression with that literal left the suite green. The mutation was run and
+  survived. A parameter is only pinned by a call that passes a **second,
+  different** value (`OTHER_TEAM`, `OTHER_AUD`). Before claiming a mutation is
+  covered, run it.
+- **State a mutation claim only after running the mutation.** The spec asserted
+  six pinned mutations; five were real and one was not, and the false one was
+  found by a reviewer rather than by the author. If a document says "this is
+  pinned", the author has broken the code that way and watched a test fail.
+
 ## Public-repo hygiene
+
+- **Documentation written vendor-neutrally for a vendor-specific
+  implementation is a false promise, not good hygiene.** Keeping the
+  *deployment* out of a public repo is right; generalising the *product* is
+  not. The Access docs first described `SEARCH_ACCESS_TEAM_DOMAIN` as "the
+  hostname of the identity-aware reverse proxy", while the code hardcodes
+  `/cdn-cgi/access/certs` and the `Cf-Access-Jwt-Assertion` header — so an
+  operator on Authelia would have configured it and had every request fail
+  silently, and a Cloudflare operator would have set their app's hostname
+  rather than the team domain. Name the product; hide the host, domain,
+  tenant, account, audience tag and topology.
+- **Reasoning comments leak deployments too.** Comments asserting that one
+  named role alone sees the logs, describing the credential set of the
+  particular installation, or naming a gendered individual as the only viewer
+  of a screen all shipped in code and test docstrings. State the property of the *software*
+  ("operational state is admin-gated", "where this path is the only usable
+  credential"), never of the people running one instance of it. **And sweep
+  the class, not the instance:** the first fix restated three comments and a
+  module docstring sixty lines above one of them survived; the second shipped a
+  `review-lessons` entry claiming the class was eliminated alongside four live
+  examples; the third missed one more in a file that same entry named as clean.
+  Three rounds, because each sweep was a grep hand-written from the instances
+  already known. **This lesson is the control — there is no
+  mechanical check.** One was built and then removed on the repository owner's
+  instruction (see `DECISIONS.md`, 2026-09-07). Its phrase list was overfitted to
+  the exact strings one session had used, and it was twice declared to cover the
+  class while covering half. Read that as a warning about *this* lesson too: a
+  sweep written from the instances already known misses their siblings every
+  time, so sweep for the shape — a sentence asserting something about one
+  installation, its credential set, its hostnames, or the people running it —
+  not for the words a previous round happened to use.
 
 - **Sanitise before the *first* commit, not the last.** Host / topology / PII
   removed only in the tip commit still ships in the branch's earlier commits,

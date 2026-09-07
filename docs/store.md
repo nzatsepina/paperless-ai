@@ -306,7 +306,7 @@ There are two ways to force a full rebuild. Both are safe — `app.db` (accounts
 2. Stop the indexer daemon.
 3. Delete `<INDEX_DB_PATH>` and its companion lock and WAL files (e.g. `rm /data/index.db /data/index.db.lock /data/index.db-wal /data/index.db-shm`).
 4. Restart the indexer daemon. The next reconciliation rebuilds the index from an empty store — a full backfill that re-embeds every document.
-5. Monitor progress on the Index dashboard (`GET /api/index/status`, which reports the indexer heartbeat and document count). `GET /api/stats` shows the same counts but requires an authenticated Read-only-or-above caller; the search server keeps returning `503 index-not-ready` from `healthz` until the first reconciliation completes.
+5. Monitor progress on the Index dashboard (`GET /api/index/status`, which reports the indexer heartbeat and document count and requires an **admin** caller). `GET /api/stats` shows the same counts to any authenticated Read-only-or-above caller; the search server keeps returning `503 index-not-ready` from `healthz` until the first reconciliation completes.
 
 **Source:** `search/routes.py`, `store/writer.py`
 

@@ -39,7 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from appdb import users as user_store
 from appdb.passwords import hash_password
-from appdb.users import Role, UsernameTakenError, UserStatus
+from appdb.users import AmbiguousEmailError, Role, UsernameTakenError, UserStatus
 from search.accounts import (
     GuardError,
     apply_guarded_delete,
@@ -360,6 +360,21 @@ def _stats_public(store_reader: StoreReader) -> PublicStatsResponse:
 
 def _create_user(body: CreateUserRequest, app_db: sqlite3.Connection) -> UserEnvelope:
     """create-user-handler body: hash the password, insert, map."""
+    # An address must identify at most one account. `users.email` carries no
+    # UNIQUE constraint, and the reverse-proxy credential path resolves people
+    # BY email — two rows sharing an address make that address ambiguous, and
+    # an ambiguous identity fails closed, so the duplicate would lock that
+    # person out with no signal beyond a log line. Refuse it here instead.
+    if body.email:
+        try:
+            taken = user_store.get_by_email(app_db, body.email) is not None
+        except AmbiguousEmailError:
+            # Already duplicated. Refuse rather than add a third row.
+            taken = True
+        if taken:
+            raise HTTPException(
+                status_code=409, detail="That email address is already in use."
+            )
     try:
         user = user_store.create(
             app_db,
@@ -394,6 +409,21 @@ def _update_user(
     """
     if user_store.get_by_id(app_db, user_id) is None:
         raise HTTPException(status_code=404, detail="User not found.")
+
+    # Same reason as _create_user: an address must identify at most one
+    # account, or the reverse-proxy credential path cannot resolve it and
+    # fails closed on the person it belongs to.
+    if body.email:
+        try:
+            holder = user_store.get_by_email(app_db, body.email)
+        except AmbiguousEmailError:
+            raise HTTPException(
+                status_code=409, detail="That email address is already in use."
+            ) from None
+        if holder is not None and holder.id != user_id:
+            raise HTTPException(
+                status_code=409, detail="That email address is already in use."
+            )
 
     # A password reset is hashed before it reaches the store.
     password_hash = hash_password(body.password) if body.password is not None else None

@@ -30,13 +30,13 @@ Served by one uvicorn process (`search.api:main`). Wire models (Pydantic) live *
 | `DELETE /api/documents/{id}` (204) | admin + `admin` scope | `document_routes/_documents.py` (`delete_document`) |
 | `GET /api/correspondents`, `/api/document-types`, `/api/tags` | readonly + `api` | `document_routes/_taxonomy.py` (`list_correspondents`, `list_document_types`, `list_tags`) |
 | `POST` on the same three (201) | member + `api` | `document_routes/_taxonomy.py` (`create_correspondent`, `create_document_type`, `create_tag`) |
-| `GET /api/index/status`, `/activity`, `/failed` | readonly + `api` | `index_routes.py` (`index_status`, `index_activity`, `index_failed`) |
+| `GET /api/index/status`, `/activity`, `/failed` | admin + `admin` scope | `index_routes.py` (`index_status`, `index_activity`, `index_failed`) |
 | `POST /api/index/rebuild` | admin + `admin` scope | `index_routes.py` (`index_rebuild`) |
 | `GET /api/settings`, `PUT /api/settings`, `POST /api/settings/test-connection` | admin + `admin` scope | `settings_routes.py` (`get_settings`, `put_settings`, `test_connection`) |
 | `GET /api/users`, `POST /api/users` (201), `PATCH`/`DELETE /api/users/{id}` | admin + `admin` scope | `account_routes.py` (`list_users`, `create_user`, `update_user`, `delete_user`) |
 | `GET`/`POST /api/api-keys`, `PATCH`/`DELETE /api/api-keys/{id}` | member + `admin` scope (owner rules apply) | `api_key_routes.py` (`list_api_keys`, `create_api_key`, `update_api_key`, `delete_api_key`) |
 
-Auth column = *role* + *key scope*. The scope half binds **API-key callers only**; a cookie session is bounded by role alone (`deps.py::_enforce` skips the scope check when `caller.scopes is None`). Roles rank `readonly` < `member` < `admin`.
+Auth column = *role* + *key scope*. The scope half binds **API-key callers only**; a cookie session is bounded by role alone (`deps.py::_enforce` skips the scope check when `caller.scopes is None`). Roles rank `readonly` < `member` < `admin`. Behind an optional reverse-proxy identity assertion (`SEARCH_ACCESS_TEAM_DOMAIN` + `SEARCH_ACCESS_AUD`, both env-only, off by default), a verified caller resolves the same way as a cookie session — role-bounded, `scopes=None` — see [SECURITY](SECURITY.md).
 
 Everything else (`GET /{path}`) is the SPA catch-all (`spa.py` (`spa_catch_all`)), which hard-refuses paths starting with `api/` or `mcp`.
 

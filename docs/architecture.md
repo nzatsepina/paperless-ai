@@ -315,7 +315,7 @@ paperless-ai/
 │   │                        normalisers · constants
 │   ├── indexer/             Indexer daemon: daemon/ · reconciler/ · chunker · activity · lock
 │   └── search/              Search server: api · mcp_server · core · planner · retriever ·
-│                            synthesizer · refinement · auth · sessions · deps · the route
+│                            synthesizer · refinement · auth · sessions · access_jwt · access_identity · deps · the route
 │                            modules · wire/ (Pydantic boundary) · spa
 └── tests/
     ├── conftest.py          Root fixtures, markers, path setup
