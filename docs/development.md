@@ -217,11 +217,11 @@ The pipeline is a set of independent check jobs, and an image build that depends
 | **Dependency audit (pip-audit)** | Install the project, audit the resolved environment |
 | **Frontend** | Node 22, `npm ci`, then `typecheck` → `lint` → `test` → `build` |
 | **Docker** | Builds the image; gated on **all** the check jobs above |
-| **Docker manifest** | (push only) Assembles the multi-arch manifest from the per-arch digests |
+| **Docker manifest** | (not on PRs) Assembles the multi-arch manifest from the per-arch digests |
 
 ### The image build
 
-The `Docker` job builds **each architecture on its native runner** — `amd64` on `ubuntu-latest`, `arm64` on `ubuntu-24.04-arm` — with no QEMU emulation. On a pull request each arch is built only to validate the Dockerfile, and nothing is pushed. On a push to `main` each arch is built and pushed *by digest*, and `Docker manifest` then assembles the tagged multi-arch manifest (`:latest`, `:sha-<sha>`) on Docker Hub.
+The `Docker` job builds **each architecture on its native runner** — `amd64` on `ubuntu-latest`, `arm64` on `ubuntu-24.04-arm` — with no QEMU emulation. On a pull request each arch is built only to validate the Dockerfile, and nothing is pushed. On a push to `main` — or a manual **Run workflow** (`workflow_dispatch`) on any branch — each arch is built and pushed *by digest* to **GitHub Container Registry**, and `Docker manifest` then assembles the tagged multi-arch manifest. Only a push to `main` writes `:latest`; a dispatch publishes `:sha-<sha>` alone, so building a branch cannot move the tag a default `docker run` pulls. The registry path is `ghcr.io/<owner>/paperless-ai`, lowercased, and the push authenticates with the `GITHUB_TOKEN` Actions already issues — there is no registry secret to configure.
 
 CI passes `RUN_TESTS=0` to the image build because the dedicated `Tests` job already ran `pytest` once, natively — re-running it inside the emulated build per architecture would be slow and redundant. A plain local `docker build` defaults to `RUN_TESTS=1` and keeps the in-image test gate.
 

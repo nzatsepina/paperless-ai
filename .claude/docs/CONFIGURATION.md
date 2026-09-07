@@ -31,6 +31,8 @@ once. Unknown fact → omit the section, never guess. -->
 
 `AI_MODELS` is a legacy env-only fallback for `OCR_MODELS`/`CLASSIFY_MODELS`, deliberately absent from `CONFIG_KEYS` (migration v6 in `app.db` splits it). `SEARCH_API_KEY` is retired — programmatic access is by minted API keys only.
 
+`SEARCH_ACCESS_TEAM_DOMAIN` / `SEARCH_ACCESS_AUD` (optional reverse-proxy identity assertion — see [SECURITY](SECURITY.md)) are also env-only and deliberately absent from `CONFIG_KEYS`: `PUT /api/settings` must not be able to repoint who the application trusts. Read directly from `os.environ` by `src/search/access_jwt.py::access_config`, not through `current_settings`, so this auth path cannot be broken by an unrelated missing required variable.
+
 ### Hot-load coverage
 
 Everything hot-loads **except** structural knobs fixed at loop/app construction: `POLL_INTERVAL` and `DOCUMENT_WORKERS` (daemon cadence and pool size), and the bootstrap keys. A config change also **resets the write-back circuit breaker** in both tag daemons and **clears the search result cache**.

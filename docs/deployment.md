@@ -4,7 +4,11 @@
 
 ## In a nutshell
 
-There is a single image — `rossetv/paperless-ai:latest` — and four things it can be:
+There is a single image — `rossetv/paperless-ai:latest`, as published by the
+upstream project — and four things it can be. A **fork** publishes its own build
+to that fork's GitHub Container Registry (`ghcr.io/<owner>/paperless-ai`); the
+upstream tag will not contain a fork's changes, so substitute the fork's image
+name in every example below if you are running one.
 
 - **OCR daemon** — reads text off scanned documents (the default command).
 - **Classifier daemon** — tags and files those documents once OCR is done.
@@ -59,9 +63,12 @@ Two things drive a deployment, and it matters which is which:
   **Settings** screen in the web UI. A change hot-loads across the whole stack
   with **no restart**. On a fresh install the table is seeded from the
   environment, so the environment variables below still work for first boot.
-- **Bootstrap environment variables** — only `APP_DB_PATH` and `INDEX_DB_PATH`
-  must stay in the environment: they tell each process where its databases live,
-  so they cannot themselves live in a database.
+- **Environment-only variables** — four settings never live in the config
+  table. `APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap*: they tell each
+  process where its databases live, so they cannot themselves live in a
+  database. `SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD` are *trust*:
+  they name the identity the server accepts, and anyone who could edit them
+  through Settings could repoint who the application trusts.
 
 See the [Configuration Reference](configuration.md) for the precedence rules and
 every variable. The examples below set values via the environment, which is the
@@ -334,8 +341,16 @@ It is a three-stage build (`Dockerfile`):
    steady-state RSS across the long-lived daemons.
 
 CI builds each architecture (`linux/amd64`, `linux/arm64`) on a native runner and
-publishes a multi-arch manifest to Docker Hub as `rossetv/paperless-ai:latest`
-(and `:sha-<sha>`). See [Development](development.md#cicd-pipeline).
+publishes a multi-arch manifest to **GitHub Container Registry** as
+`ghcr.io/<owner>/paperless-ai`. A push to `main` tags it `:latest` and
+`:sha-<sha>`; a manual **Run workflow** on any branch publishes `:sha-<sha>`
+only, so a branch can be deployed by digest without first being merged and
+without moving `:latest`.
+
+A newly created GHCR package is **private by default**. If you want anonymous
+`docker pull`, change the package's visibility to public once — under the
+repository's Packages tab — otherwise the host that pulls it needs a token with
+`read:packages`. See [Development](development.md#cicd-pipeline).
 
 ---
 
@@ -370,5 +385,17 @@ Know what goes where before you deploy:
 - The search server binds `0.0.0.0` by design (it is auth-gated). Restrict
   exposure at your reverse proxy or port map, and pin `SEARCH_FORWARDED_ALLOW_IPS`
   to the proxy's CIDR if the uvicorn port is otherwise reachable.
+- If **Cloudflare Access** fronts the deployment, you can let people sign in
+  as themselves through it by setting `SEARCH_ACCESS_TEAM_DOMAIN` (your Access
+  *team* domain, e.g. `your-team.cloudflareaccess.com` — not this
+  application's hostname) and `SEARCH_ACCESS_AUD` (the protecting Access
+  application's AUD tag). Both, or the path stays off. Cloudflare is the only
+  issuer supported today; another identity-aware proxy needs code, not
+  configuration. The server verifies the **signed** assertion — never the
+  plaintext identity header beside it, which anything reaching the origin
+  directly could forge — and matches it to an **existing** account by email.
+  It never creates accounts, so create each person's account, with their
+  address, before they first arrive. Keep the uvicorn port unreachable except
+  through that proxy, as above.
 - The OpenAI SDK's proxy auto-detection is disabled (`trust_env=False`) so API
   calls are never accidentally routed through an unintended proxy in a container.

@@ -871,7 +871,7 @@ container logs at startup and cleared once used). There is no `SEARCH_API_KEY`
 environment variable; an unauthenticated "open by default" state is impossible by
 design — setup mode is not an open state, it is a locked one.
 
-Once set up, every `/api/*` request requires one of two credentials:
+Once set up, every `/api/*` request requires one of three credentials:
 
 - **Cookie session** — the human path. `POST /api/auth/login` validates the
   username and password and issues a signed `HttpOnly` session cookie. The browser
@@ -887,6 +887,58 @@ Once set up, every `/api/*` request requires one of two credentials:
   (`search.api_keys.serialise_scopes` rejects any value outside these three), so
   an unknown scope can never be persisted, and the `appdb.api_keys.scopes` column
   only ever holds a subset of `api`/`mcp`/`admin`.
+- **Verified reverse-proxy identity** — the deployment path, added 2026-09-06.
+  Where **Cloudflare Access** fronts the application — the only issuer supported
+  today, since both the key-set path (`/cdn-cgi/access/certs`) and the header
+  (`Cf-Access-Jwt-Assertion`) are Cloudflare's — `search.access_jwt` verifies its
+  *signed assertion* (signature against the issuer's key set, plus issuer,
+  audience and expiry) and `resolve_caller` resolves the person from the
+  verified claim. It is tried
+  **first**: were the cookie tried first, a stale session would outrank the
+  proxy's identity and let one browser act as another person for that session's
+  lifetime.
+
+  **Justification.** Where the proxy already authenticates people, a deployment
+  may legitimately run with no usable password on any account. Without this path
+  a person the proxy has authenticated has no way to *be* themselves, and the
+  alternative in practice is one shared credential injected for everyone, which
+  destroys the traceability the accounts exist for. A *verified assertion* is chosen over
+  the proxy's plaintext identity header precisely so this credential is not
+  weaker than the two above: Cloudflare's own guidance is that validating the header alone is
+  not sufficient and the signature must be confirmed; a signature cannot be
+  forged by anything that reaches the origin directly.
+
+  **It creates nothing.** This credential resolves an existing account and
+  never provisions one: an address with no account is refused and logged, so
+  the set of people who can authenticate is bounded by rows an administrator
+  deliberately created, not by a proxy-side policy this repository cannot
+  read. That also makes deleting an account a real revocation. An earlier
+  revision did auto-provision, and every serious defect found in six review
+  rounds was downstream of it.
+
+  Four constraints keep it from widening the surface:
+  - It runs **only** when both its environment variables are set. Unset, the
+    application authenticates exactly as before. It is env-only and deliberately
+    absent from `CONFIG_KEYS`, so `PUT /api/settings` cannot repoint who the
+    application trusts.
+  - It yields to the other paths whenever it cannot resolve a person: an invalid
+    assertion, a **machine** caller (a service-token assertion is validly signed
+    but carries no identity claim), an address holding **no account**, an
+    address held by **more than one** account, or a **suspended** account.
+    Swallowing a machine caller would discard the API-key scope model and the
+    `api_key_id` audit linkage; treating an ambiguous address as an absent one
+    is the defect that produced an account per request.
+  - A resolved caller is `scopes=None` -- identical to a cookie session, and
+    therefore role-bounded, never scope-exempt. It grants nothing a cookie
+    session does not.
+  - **CSRF does not come free here.** The cookie path's whole defence is
+    `SameSite=Strict` on the application's own cookie (`search.cookies`; the
+    design doc that specified it was never committed here, so the code is the
+    reference). This path is not
+    authenticated by that cookie, so that defence does not apply to it and the
+    proxy's cookie policy is outside this repository's control. State-changing
+    requests on this path therefore carry an explicit `Origin` check. Do not
+    remove it on the grounds that the proxy's cookie looks safe today.
 
 A new endpoint is gated by `require_api_scope` (read-only+) or
 `require_api_scope_member` (member+) or `require_admin` (admin-only). Opting an

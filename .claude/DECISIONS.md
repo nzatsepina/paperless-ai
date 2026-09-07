@@ -141,3 +141,129 @@ before push.
 **Spec:** .claude/specs/20260721-born-digital-ocr-skip.md (*Amendments*, 2026-08-17)
 **Affects:** `src/ocr/born_digital.py` (`docs/ocr-pipeline.md` stale pending operator instruction)
 
+
+## 2026-09-06 — Cloudflare Access identity as a third auth path, tried first
+
+Verified Cloudflare Access assertions (`Cf-Access-Jwt-Assertion`, JWKS-signature + issuer/audience/
+expiry checked) now resolve a caller in `resolve_caller`, ahead of the session cookie and bearer
+API key. A verified `email` claim resolves an EXISTING user (match-only; an unknown address is refused) with that account's OWN role, matched on
+`email` — `validate_username` forbids `@`, so an address can never be a username) and behaves like a cookie session (`scopes=None`, role-bounded only). A valid assertion
+with no `email` claim (the service-token/machine case, `common_name` instead) returns `None` and
+falls through unchanged to the cookie/bearer paths — swallowing a machine caller here would discard
+the API-key scope model and the `api_key_id` audit linkage. `SEARCH_ACCESS_TEAM_DOMAIN` /
+`SEARCH_ACCESS_AUD` are environment-only and deliberately absent from `CONFIG_KEYS`: `PUT
+/api/settings` must not be able to repoint who the app trusts. `access_config()` reads
+`os.environ` directly rather than building `Settings`, so an unrelated missing required variable
+(e.g. `PAPERLESS_TOKEN`) cannot break login. Both variables unset disables the branch entirely;
+cookie and API-key auth are unchanged — the correct default for any deployment not sitting behind
+Cloudflare Access. `PyJWT[crypto]` moved from a transitive to a declared dependency, since auth
+must not depend on another package's dependency graph surviving a bump.
+
+Separately, `GET /api/index/{status,activity,failed}` moved from `readonly`+`api` to admin-only —
+a deliberate requirement change — daemon heartbeats, reconcile history and the failed-document
+list are operational state rather than archive data, and administrators alone are to see them —
+not a gate-driven test change.
+**Affects:** `src/search/access_jwt.py`, `src/search/deps.py` (`resolve_caller`, `access_identity.access_user`),
+`src/search/index_routes.py`, `pyproject.toml`
+
+## 2026-09-07 — Human docs reconciled to the third auth path
+
+The auth change landed with `CODE_GUIDELINES.md` §10.1 amended but every other human-facing
+document still describing the pre-change system — `docs/search.md`'s RBAC table documented the
+`/api/index/*` breaking change *backwards* (`Read-only+`, so an operator following it would mint a
+credential that 403s), `DESIGN.md` §12.2 listed the Index nav link as visible to all authenticated
+users, `README.md` counted "two kinds of credential", and `docs/configuration.md` did not mention
+`SEARCH_ACCESS_TEAM_DOMAIN` / `SEARCH_ACCESS_AUD` at all. Claude does not edit the human tree
+unasked and was explicitly asked to here, so the reconciliation is recorded rather than left as an
+unexplained boundary crossing. (The instruction itself is not quoted: a public repository is the
+wrong place to reproduce a person's words verbatim.) Files changed: `README.md`, `DESIGN.md` (§12.2, §13.5, §14.6),
+`docs/search.md`, `docs/configuration.md`, `docs/deployment.md`, `docs/store.md`,
+`docs/indexer.md`, `docs/architecture.md`, and two dead cross-references in `CODE_GUIDELINES.md`
+§10.1 (a self-citation to a rule that does not exist, and a `§4.4` pointing at "Domain language
+wins" rather than the web-redesign spec). The docs name the **product** — Cloudflare Access — because
+the feature cannot be configured without it: the key-set path and the assertion header are
+Cloudflare's, and a first pass that wrote only "an identity-aware reverse proxy" promised
+vendor-agnostic support the code does not have, and misdescribed `SEARCH_ACCESS_TEAM_DOMAIN`
+as the application's hostname rather than the Access team domain. An adversarial round caught
+both. This repository is public and still names no *deployment* — no host, domain, tenant,
+account, audience tag or topology.
+
+`.claude/INDEX.md`'s freshness stamps cited a pre-amend commit that was not an ancestor of the
+branch and would not have survived a push; repointed, along with the OPERATIONS row, which had
+been edited in the same commit but left at an older stamp. **Do not cite a branch SHA in this
+file while the branch can still be rewritten** — this entry did, twice, and a later rewrite
+orphaned both citations. Cite the file and the fact instead.
+
+Reasoning comments that described the *deployment* rather than the software were restated: a
+public repository should not assert that one named role alone sees the logs, nor describe the
+credential set of the particular installation it was written on. The first pass restated three of them and missed four more —
+including the `index_routes.py` module docstring sixty lines above the comment it did fix — and
+a following review round caught that while a `review-lessons.md` entry claiming the class was
+eliminated was already committed. The round after *that* found another live instance in
+`src/search/access_jwt.py`, again beside a record asserting the file was clean — three rounds,
+the same false-completeness claim each time, because each sweep was a hand-written grep shaped to
+the instances already known.
+
+A mechanical gate was built to replace that judgement, and then removed — see the entry below.
+The instances themselves were all corrected, and the standing lesson in
+`.claude/memory/review-lessons.md` remains the control.
+
+`src/search/index_routes.py`, `src/search/access_jwt.py`, `web/src/routes.test.tsx`,
+`tests/integration/test_index_api.py`, `tests/unit/search/test_access_jwt.py`,
+`tests/unit/search/test_access_identity.py` and `CODE_GUIDELINES.md` §10.1 now state the property
+of the software. The `index_routes.py` *inline comment* previously said its deciding document was
+unresolvable from this repository and now cites the spec added here; the module docstring above it
+still cites the never-committed web-redesign spec, as most of this repository does — a
+repo-wide convention left alone rather than changed on this branch.
+**Spec:** `.claude/specs/20260906-verified-proxy-identity.md`
+**Affects:** `README.md`, `DESIGN.md`, `CODE_GUIDELINES.md`, `docs/search.md`, `docs/configuration.md`, `docs/deployment.md`, `docs/store.md`, `docs/indexer.md`, `docs/architecture.md`, `.claude/INDEX.md`, `.claude/GATES.md`, `src/search/index_routes.py`, `src/search/access_jwt.py`, `web/src/routes.test.tsx`, `web/src/components/layout/BottomTabBar/BottomTabBar.stories.tsx`, `tests/integration/test_index_api.py`, `tests/unit/search/test_access_jwt.py`, `tests/unit/search/test_access_identity.py`, `tests/unit/common/test_config.py`
+
+
+## 2026-09-07 — Remove the `no-deployment-prose` gate
+
+**Provenance: human.** Instruction, verbatim: *"drop the whole thing then push and deploy. just
+make sure that the drop is justified"*, following the question *"wait so are the gates even needed
+if you added it ?"*. A human decision overrides the panel requirement for removing a gate
+(`GATES.md`, "Changing gates"), so no panel was convened. The id is listed under `## Retired` and
+can never be reused.
+
+**What it was.** Added earlier the same day, monocratic, after the same class of leak — comments
+and docstrings asserting facts about one installation rather than about the software — survived
+three consecutive review rounds, twice beside a record claiming it had been swept. It grew a
+second half (host-shaped tokens against an allowlist) after a fourth round found a live FQDN that
+the phrasings-only version passed.
+
+**Why removing it is right, not a retreat.**
+
+1. *It was calibrated to one session's mistakes.* The phrase list held thirteen literal English
+   strings, every one of them text written during the session that added the gate. A future
+   instance of this class will not use those words. A check that only recognises the errors
+   already made is overfitting, and it would have been carried by every future contributor.
+2. *Almost everything it ever caught was already being caught.* Every phrasing hit was text the
+   review rounds had flagged or would have flagged, and which was being deleted anyway. Exactly
+   one finding was independent: a real FQDN in `src/search/mcp_server.py`, and that arrived with
+   an upstream commit and names the upstream maintainer's own host, already public in the upstream
+   repository. One independent catch does not carry a permanent gate.
+3. *It never covered the class, and a partial gate on a "never do X" rule is worse than none.*
+   Bare hostnames, IP literals, non-ASCII labels and every TLD outside a fixed set passed it. A
+   private-range IP check was written and measured at seven false positives in this tree — the
+   `10.0.0.0/8` CIDR example in `README.md`'s own `SEARCH_FORWARDED_ALLOW_IPS` row, and fixture
+   client addresses in the throttle and session tests — so that shape cannot be checked mechanically
+   here at all. Twice the gate was declared to cover the class while covering half, which is the
+   *same* false-completeness defect it existed to prevent, one level up.
+4. *It cost more than it returned.* Three of the six commits on the branch that introduced it, and
+   two full adversarial review rounds, went to the gate rather than to the feature. Rounds 4, 5 and
+   6 each found defects in the gate itself; none found a defect in the auth change it was guarding.
+
+**What replaces it.** Nothing mechanical, deliberately. `.claude/memory/review-lessons.md` carries
+the lesson as a live control and now warns against the failure that sank the gate: sweep for the
+*shape* — a sentence asserting something about one installation, its credentials, its hostnames or
+its people — never for the words a previous round happened to use. The `gitleaks` pre-push scan and
+the `secret-scanner` semantic tier are unaffected and still cover credentials, which was always the
+higher-severity class.
+
+**What is kept.** Every instance the gate found stays corrected: the restated comments and
+docstrings across `src/`, `tests/` and `CODE_GUIDELINES.md`, the hostname removed from
+`src/search/mcp_server.py`, and the branch history rewritten so no commit message carries the
+phrasings. Removing the check does not un-fix what it found.
+**Affects:** `.claude/GATES.md`, `.claude/INDEX.md`, `.claude/memory/review-lessons.md`, `.claude/gates/no-deployment-prose.py` (deleted), `tests/unit/test_no_deployment_prose_gate.py` (deleted)
