@@ -89,7 +89,8 @@ def load_settings(app_db_path: str) -> Settings:
     merged: dict[str, str] = dict(os.environ)
     merged.update(stored)
     # Nothing writes the bootstrap variables to the config table, but
-    # is known explicitly here — inject it so _build_settings resolves
+    # app_db_path is known explicitly here — inject it so _build_settings
+    # resolves
     # Settings.APP_DB_PATH to the path the caller actually used, regardless
     # of whether APP_DB_PATH is set in the environment.
     merged["APP_DB_PATH"] = app_db_path

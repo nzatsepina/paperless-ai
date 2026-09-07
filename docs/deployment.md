@@ -63,8 +63,10 @@ Two things drive a deployment, and it matters which is which:
   **Settings** screen in the web UI. A change hot-loads across the whole stack
   with **no restart**. On a fresh install the table is seeded from the
   environment, so the environment variables below still work for first boot.
-- **Environment-only variables** — four settings never live in the config
-  table. `APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap*: they tell each
+- **Environment-only variables** — nothing writes four settings to the config
+  table (see [Configuration](configuration.md#in-a-nutshell) for the one
+  carve-out: `INDEX_DB_PATH` is resolved through the same merge as every other
+  setting, so a row inserted by hand would win over the environment). `APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap*: they tell each
   process where its databases live, so they cannot themselves live in a
   database. `SEARCH_ACCESS_TEAM_DOMAIN` and `SEARCH_ACCESS_AUD` are *trust*:
   they name the identity the server accepts, and anyone who could edit them
