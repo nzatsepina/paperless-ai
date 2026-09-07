@@ -243,14 +243,18 @@ describe('AppRoutes', () => {
     await waitFor(() => expect(screen.getByTestId('index-page')).toBeInTheDocument());
   });
 
-  it('renders the index page for a non-admin too', async () => {
+  it('redirects a non-admin away from /index to the app', async () => {
+    // Changed deliberately, not to make a gate pass: index status, activity
+    // and failed documents are operational state, and the API now gates all
+    // three on require_admin. Leaving the route open would show every member
+    // a page of 403s.
     const member = { ...SAMPLE_USER, role: 'member' as const };
     mockUseSetupStatus.mockReturnValue(
       setupStatusResult({ isSuccess: true, data: { needed: false } }),
     );
     mockUseMe.mockReturnValue(meResult({ isSuccess: true, data: { user: member } }));
     renderAt('/index');
-    await waitFor(() => expect(screen.getByTestId('index-page')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('search-page')).toBeInTheDocument());
   });
 
   it('redirects an unauthenticated visitor from /index to /login', async () => {

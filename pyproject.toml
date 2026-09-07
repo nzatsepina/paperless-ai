@@ -17,6 +17,10 @@ dependencies = [
     "uvicorn[standard]~=0.47",
     "mcp~=1.28",
     "argon2-cffi~=23.1",
+    # Cloudflare Access assertion verification (search.access_jwt). Present
+    # transitively today; declared explicitly because auth must not depend on
+    # another package's dependency graph surviving a bump.
+    "PyJWT[crypto]~=2.13",
 ]
 
 [project.scripts]

@@ -794,9 +794,10 @@ def build_mcp_app(
         # double-prefix to "/mcp/mcp" and never serve the bare "/mcp" a client
         # POSTs to — see search.api.create_app.)
         #
-        # Disable FastMCP's DNS-rebinding Host/Origin check. It auto-enables for
-        # the default 127.0.0.1 bind with a localhost-only allowlist, which 421s
-        # every real request (Host: search.rosset.ie behind the reverse proxy).
+        # Disable FastMCP's DNS-rebinding Host/Origin check. It auto-enables
+        # for the default 127.0.0.1 bind with a localhost-only allowlist, so it
+        # 421s any request whose Host is not localhost — which behind a reverse
+        # proxy is every request.
         # It is redundant here: the bearer-auth middleware (below) rejects any
         # request without an mcp-scoped key or session cookie BEFORE the
         # transport runs, the reverse proxy controls the Host, and the SPA's

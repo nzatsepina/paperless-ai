@@ -201,9 +201,9 @@ function RoutesBody(): React.ReactElement {
           <Route
             path="/index"
             element={
-              <ProtectedRoute>
+              <RequireAdmin>
                 <IndexPage />
-              </ProtectedRoute>
+              </RequireAdmin>
             }
           />
           <Route

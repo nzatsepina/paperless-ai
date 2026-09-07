@@ -20,7 +20,7 @@ import styles from './AppNavBar.module.css';
  * only. The `adminOnly` flag controls visibility: `true` means the link is
  * hidden unless the authenticated user holds the `admin` role.
  *
- * Final set (Wave 7): Search · Library · Index · Settings (admin-only).
+ * Final set: Search · Library · Index (admin-only) · Settings (admin-only).
  */
 const NAV_LINKS: ReadonlyArray<{
   /** React Router `to` path. */
@@ -36,7 +36,7 @@ const NAV_LINKS: ReadonlyArray<{
 }> = [
   { to: '/',        label: 'Search',   icon: 'search',   end: true },
   { to: '/library', label: 'Library',  icon: 'library' },
-  { to: '/index',   label: 'Index',    icon: 'index' },
+  { to: '/index',   label: 'Index',    icon: 'index',    adminOnly: true },
   { to: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
 ] as const;
 

@@ -4,7 +4,13 @@ The request-time auth dependencies, kept separate from :mod:`search.auth` so
 that module stays free of FastAPI (it is imported by
 :mod:`search.mcp_server`).
 
-Two credential kinds reach these dependencies:
+Three credential kinds reach these dependencies:
+
+- **A verified reverse-proxy assertion** (a human). ``search.access_jwt``
+  verifies the signature, issuer, audience and expiry; ``search.access_identity``
+  resolves the person from the verified claim, matching an EXISTING account by
+  email and never creating one. Tried first, so a stale cookie cannot outrank
+  it.
 
 - A ``search_session`` cookie — a logged-in human. Their role is the only
   bound on what they may do; cookie callers are **not** scope-limited.
@@ -54,6 +60,7 @@ from fastapi import Depends, HTTPException, Request
 from appdb import api_keys as key_store
 from appdb import sessions as session_store
 from appdb.connection import connect
+from search import access_identity, access_jwt
 from search.api_keys import (
     SCOPE_ADMIN,
     SCOPE_API,
@@ -124,8 +131,16 @@ def resolve_caller(
 ) -> Caller:
     """Resolve the request to a :class:`Caller`, or raise ``401``.
 
-    Tries the ``search_session`` cookie first (a human), then the
-    ``Authorization: Bearer`` API key. The first that resolves wins. A
+    Tries a verified Cloudflare Access assertion **first** (a human), then
+    the ``search_session`` cookie (also a human), then the
+    ``Authorization: Bearer`` API key. The first that resolves wins.
+
+    The Access branch leads deliberately: were the cookie tried first, a stale
+    ``search_session`` would outrank the Access identity and let one browser
+    act as another person for that session's lifetime. It runs only when both
+    Access variables are configured, and yields to the other paths whenever it
+    cannot resolve a person — an invalid assertion, a machine caller, an
+    address with no account, an ambiguous address, or a suspended account. A
     resolved cookie session has its ``last_seen_at`` refreshed when stale; a
     resolved API key has its ``last_used_at``/``request_count`` touched when
     stale.
@@ -142,6 +157,45 @@ def resolve_caller(
     Raises:
         HTTPException: ``401`` when no valid credential is present.
     """
+    access = access_jwt.access_config()
+    if access is not None:
+        team_domain, audience = access
+        email = access_jwt.verify_access_email(
+            request.headers.get("cf-access-jwt-assertion"),
+            team_domain=team_domain,
+            audience=audience,
+        )
+        if email is not None:
+            if (
+                request.method in access_identity.UNSAFE_METHODS
+                and access_identity.is_cross_site(request)
+            ):
+                log.warning(
+                    "search.access_cross_site_refused",
+                    method=request.method,
+                    path=request.url.path,
+                    # Without these the operator cannot tell a real CSRF
+                    # attempt from a mis-pinned SEARCH_FORWARDED_ALLOW_IPS,
+                    # which 403s every state change with this same line.
+                    origin=request.headers.get("origin"),
+                    scheme=request.url.scheme,
+                    host=request.headers.get("host"),
+                )
+                raise HTTPException(
+                    status_code=403, detail="Cross-site request refused"
+                )
+            person = access_identity.access_user(app_db, email)
+            if person is not None:
+                # Tried FIRST, so a stale search_session cookie cannot outrank
+                # the Access identity and let one browser act as another
+                # person. scopes=None marks a human: role-bounded, not
+                # scope-limited — identical to a cookie caller.
+                return Caller(user=person, scopes=None, api_key_id=None)
+        # No email means either an invalid assertion or a machine caller
+        # (a service token carries common_name, never email). Both fall
+        # through: swallowing the machine here would discard the API-key
+        # scope model and the api_key_id audit linkage.
+
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
     user = resolve_session(app_db, cookie_token)
     if user is not None:

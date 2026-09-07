@@ -838,6 +838,14 @@ def test_config_keys_has_ninety_entries() -> None:
     assert "SEARCH_PLANNER_TAXONOMY_LIMIT" in CONFIG_KEYS
     assert "SEARCH_IDENTITY_AWARE" in CONFIG_KEYS
     assert "SEARCH_API_KEY" not in CONFIG_KEYS
+    # Not a catalogue oversight: these two name the identity the server will
+    # trust. In CONFIG_KEYS they would be editable through PUT /api/settings,
+    # letting anyone with settings access repoint who the application believes
+    # people are. They are read straight from os.environ (search.access_jwt
+    # .access_config) and must stay out. The count assertion above alone does
+    # not protect this -- adding them and bumping the number would pass.
+    assert "SEARCH_ACCESS_TEAM_DOMAIN" not in CONFIG_KEYS
+    assert "SEARCH_ACCESS_AUD" not in CONFIG_KEYS
     assert "AI_MODELS" not in CONFIG_KEYS
     assert "OCR_MODELS" in CONFIG_KEYS
     assert "CLASSIFY_MODELS" in CONFIG_KEYS
