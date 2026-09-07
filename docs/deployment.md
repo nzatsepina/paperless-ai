@@ -64,7 +64,7 @@ Two things drive a deployment, and it matters which is which:
   with **no restart**. On a fresh install the table is seeded from the
   environment, so the environment variables below still work for first boot.
 - **Environment-only variables** — nothing writes four settings to the config
-  table (see [Configuration](configuration.md#in-a-nutshell) for the one
+  table (see [Configuration](configuration.md#how-configuration-works) for the one
   carve-out: `INDEX_DB_PATH` is resolved through the same merge as every other
   setting, so a row inserted by hand would win over the environment). `APP_DB_PATH` and `INDEX_DB_PATH` are *bootstrap*: they tell each
   process where its databases live, so they cannot themselves live in a
