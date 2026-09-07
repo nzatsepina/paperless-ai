@@ -34,7 +34,7 @@ size — compress elsewhere first. Repos outgrowing a single-level index
 | [API](docs/API.md) | REST + MCP + NDJSON surface and status mapping | 2026-09-06 @ e176f1d |
 | [PIPELINES](docs/PIPELINES.md) | OCR, classification, indexing, search — stage by stage | 2026-08-17 @ 7fa2824 |
 | [GLOSSARY](docs/GLOSSARY.md) | project vocabulary | 2026-08-17 @ 7fa2824 |
-| [modules/common](docs/modules/common.md) | shared infrastructure (leaf package) | 2026-09-07 @ 717e35f |
+| [modules/common](docs/modules/common.md) | shared infrastructure (leaf package) | 2026-09-07 @ ba73598 |
 | [modules/appdb](docs/modules/appdb.md) | `app.db` — accounts, config, heartbeats | 2026-07-19 @ beac32d |
 | [modules/store](docs/modules/store.md) | `index.db` — schema, writer, reader | 2026-07-19 @ beac32d |
 | [modules/ocr](docs/modules/ocr.md) | vision-LLM transcription daemon | 2026-08-17 @ 7fa2824 |
