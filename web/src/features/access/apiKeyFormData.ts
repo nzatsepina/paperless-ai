@@ -22,13 +22,17 @@ export const SCOPES: { id: ApiScope; description: string }[] = [
   },
   {
     id: 'admin',
-    // Deliberately scoped wording: a key never exceeds its owner's role, so
-    // for a Member this grants key management over their OWN keys and nothing
-    // more — user administration additionally needs an admin account. The
-    // panels became reachable by Members when /settings/keys stopped being
-    // admin-only, and the previous copy ("Manage users and other keys") was
-    // untrue for every Member who can now read it.
-    description: 'Manage keys you own. User administration additionally requires an admin account.',
+    // Avoid the literal "API" in this description: APIKeyCreatePanel and
+    // APIKeyEditPanel select scope checkboxes by accessible name (/api/i), the
+    // label wraps the input so the row's whole text forms that name, and
+    // reusing the word makes the admin row collide with the api row.
+    //
+    // ScopeChecklist renders this string with no role branching, so it is read
+    // by admins and members alike and must be true for both: an admin's key
+    // lists and revokes every user's (key_store.list_all in _list_api_keys,
+    // the role check in _delete_api_key), a member's only their own.
+    description:
+      "Manage keys \u2014 your own, or every user's if you are an admin. User administration additionally requires an admin account. Grant sparingly.",
   },
 ];
 
