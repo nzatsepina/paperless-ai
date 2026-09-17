@@ -22,7 +22,7 @@ size — compress elsewhere first. Repos outgrowing a single-level index
 | Doc | Purpose | Verified |
 |-----|---------|----------|
 | [OVERVIEW](OVERVIEW.md) | system summary — always injected | 2026-08-17 @ 7fa2824 |
-| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-07-14 @ 74d8577 |
+| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-09-17 @ ab0f069 |
 | [MEMORY](MEMORY.md) | project memory index — always injected | 2026-07-19 @ beac32d |
 | [GATES](GATES.md) | gate runbook — the definition of "done" | 2026-09-07 @ 1c96762 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | module map, flows, state, boundaries | 2026-07-19 @ beac32d |
@@ -42,7 +42,7 @@ size — compress elsewhere first. Repos outgrowing a single-level index
 | [modules/indexer](docs/modules/indexer.md) | reconciler daemon — sole index writer | 2026-07-19 @ beac32d |
 | [modules/search-pipeline](docs/modules/search-pipeline.md) | agentic search: plan → retrieve → judge → synthesise | 2026-07-19 @ beac32d |
 | [modules/search-api](docs/modules/search-api.md) | FastAPI + MCP + SPA surface, auth, RBAC | 2026-09-06 @ e176f1d |
-| [modules/web](docs/modules/web.md) | React/Vite SPA | 2026-07-19 @ beac32d |
+| [modules/web](docs/modules/web.md) | React/Vite SPA | 2026-09-17 @ ab0f069 |
 
 ## Modules
 

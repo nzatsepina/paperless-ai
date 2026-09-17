@@ -111,6 +111,40 @@ function AdminGate({ children }: { children: React.ReactElement }): React.ReactE
 }
 
 /**
+ * Member-or-above route guard — layered on `ProtectedRoute`, mirroring
+ * `RequireAdmin`.
+ *
+ * Used by the API-keys screen, which is deliberately NOT admin-only: the
+ * server lets a Member manage their own keys (`require_key_management` in
+ * `search.deps`, spec §4.3) and scopes the listing to the caller's own keys
+ * for a non-admin. Gating the screen on `admin` in the SPA contradicted that
+ * contract and left Members with no way to mint the keys the API grants them.
+ *
+ * `readonly` is still turned away. As with `RequireAdmin` the check is a
+ * navigation convenience — every endpoint enforces role and scope server-side.
+ */
+function RequireMember({ children }: { children: React.ReactElement }): React.ReactElement {
+  return (
+    <ProtectedRoute>
+      <MemberGate>{children}</MemberGate>
+    </ProtectedRoute>
+  );
+}
+
+/**
+ * The inner half of `RequireMember`. Redirects a `readonly` user to the app
+ * root; `member` and `admin` both pass.
+ */
+function MemberGate({ children }: { children: React.ReactElement }): React.ReactElement {
+  const meQuery = useMe();
+  const role = meQuery.data?.user.role;
+  if (role !== 'member' && role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+/**
  * Bootstrap gate for the `/login` and `/setup` routes.
  *
  * `intent` is the route's purpose:
@@ -233,9 +267,9 @@ function RoutesBody(): React.ReactElement {
           <Route
             path="/settings/keys"
             element={
-              <RequireAdmin>
+              <RequireMember>
                 <KeysPage />
-              </RequireAdmin>
+              </RequireMember>
             }
           />
           {/* Unknown /settings/* sub-paths stay within Settings rather than

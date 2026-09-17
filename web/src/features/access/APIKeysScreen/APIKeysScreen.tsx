@@ -1,5 +1,8 @@
 import React from 'react';
-import { SettingsLayout } from '../../../components/layout/SettingsLayout/SettingsLayout';
+import {
+  SettingsLayout,
+  MEMBER_SETTINGS_NAV_GROUPS,
+} from '../../../components/layout/SettingsLayout/SettingsLayout';
 import { Table } from '../../../components/primitives/Table/Table';
 import type { Column } from '../../../components/primitives/Table/Table';
 import { Button } from '../../../components/primitives/Button/Button';
@@ -188,6 +191,9 @@ export function APIKeysScreen(): React.ReactElement {
 
   return (
     <SettingsLayout
+      // A non-admin can reach no other screen in this area, so the rail shows
+      // only their own keys rather than links that would bounce them to `/`.
+      groups={me?.role === 'admin' ? undefined : MEMBER_SETTINGS_NAV_GROUPS}
       title="API Keys"
       subtitle="Bearer tokens for the REST API, the MCP server, and external integrations."
       actions={

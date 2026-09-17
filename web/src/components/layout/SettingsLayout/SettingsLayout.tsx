@@ -45,6 +45,22 @@ const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   },
 ];
 
+/**
+ * The nav groups shown to a non-admin.
+ *
+ * A Member may use exactly one screen in this area — their own API keys —
+ * and every other item here routes to an admin-gated page that would bounce
+ * them straight back to `/`. Offering only the item they can reach keeps the
+ * rail honest; the caller decides which set applies, so this component stays
+ * presentational and role-free.
+ */
+export const MEMBER_SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
+  {
+    title: 'Access control',
+    items: [{ id: 'keys', label: 'API Keys', to: '/settings/keys', icon: 'key' }],
+  },
+];
+
 export interface SettingsLayoutProps {
   /** The page title — rendered as the `<h1>`. */
   title: string;
@@ -59,6 +75,11 @@ export interface SettingsLayoutProps {
   actions?: React.ReactNode;
   /** The page body, rendered in the scrollable content region. */
   children: React.ReactNode;
+  /**
+   * The side-nav groups. Defaults to the full admin set; pass
+   * {@link MEMBER_SETTINGS_NAV_GROUPS} for a non-admin caller.
+   */
+  groups?: SettingsNavGroup[] | undefined;
   /** Additional class names to merge onto the layout root. */
   className?: string;
 }
@@ -82,11 +103,12 @@ export function SettingsLayout({
   subtitle,
   actions,
   children,
+  groups = SETTINGS_NAV_GROUPS,
   className,
 }: SettingsLayoutProps): React.ReactElement {
   return (
     <div className={cn(styles['layout'], className)}>
-      <SettingsSideNav groups={SETTINGS_NAV_GROUPS} eyebrow="Settings" />
+      <SettingsSideNav groups={groups} eyebrow="Settings" />
       <div className={styles['content']}>
         <header className={styles['header']}>
           <div className={styles['header-text']}>

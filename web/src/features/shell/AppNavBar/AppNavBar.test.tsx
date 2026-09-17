@@ -189,6 +189,48 @@ describe('AppNavBar', () => {
     expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
   });
 
+  it('shows an API keys link for a member, who has no Settings entry point', () => {
+    mockUseAuth.mockReturnValue({
+      user: { ...SAMPLE_USER, role: 'member' },
+      role: 'member',
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseLogout.mockReturnValue(makeLogout());
+    mockUseStats.mockReturnValue(makeStats());
+    const { container } = render(
+      <MemoryRouter>
+        <AppNavBar />
+      </MemoryRouter>,
+    );
+    const link = within(desktopNav(container)).getByRole('link', { name: /api keys/i });
+    expect(link).toHaveAttribute('href', '/settings/keys');
+  });
+
+  it('hides the API keys link from an admin, who reaches it via the Settings rail', () => {
+    const { container } = renderNavBar();
+    expect(
+      within(desktopNav(container)).queryByRole('link', { name: /api keys/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides the API keys link from a readonly user, who cannot use the screen', () => {
+    mockUseAuth.mockReturnValue({
+      user: { ...SAMPLE_USER, role: 'readonly' },
+      role: 'readonly',
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseLogout.mockReturnValue(makeLogout());
+    mockUseStats.mockReturnValue(makeStats());
+    render(
+      <MemoryRouter>
+        <AppNavBar />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: /api keys/i })).not.toBeInTheDocument();
+  });
+
   it('renders a Library link pointing at /library', () => {
     mockUseAuth.mockReturnValue({
       user: { id: 1, username: 'amy', display_name: 'Amy', email: null, role: 'member', status: 'active', created_at: '', last_login_at: null },
@@ -348,11 +390,39 @@ describe('AppNavBar', () => {
     expect(within(mobileNav as HTMLElement).getAllByRole('link')).toHaveLength(4);
   });
 
-  it('renders two tabs in the bottom tab bar for a non-admin', () => {
-    // /index joined /settings as admin-only, so a member now sees one fewer.
+  it('renders three tabs in the bottom tab bar for a member', () => {
+    // /index and /settings are admin-only, but "API keys" is member-only —
+    // the one settings-area screen a member may use, and one they have no
+    // other route to. Asserting the labels, not just the count, so the set
+    // cannot drift silently.
     mockUseAuth.mockReturnValue({
       user: { ...SAMPLE_USER, role: 'member' },
       role: 'member',
+      isAuthenticated: true,
+      isLoading: false,
+    });
+    mockUseLogout.mockReturnValue(makeLogout());
+    mockUseStats.mockReturnValue(makeStats());
+    const { container } = render(
+      <MemoryRouter>
+        <AppNavBar />
+      </MemoryRouter>,
+    );
+    const mobileNav = container.querySelector('nav[aria-label="Mobile navigation"]');
+    expect(mobileNav).not.toBeNull();
+    const links = within(mobileNav as HTMLElement).getAllByRole('link');
+    expect(links).toHaveLength(3);
+    expect(links.map((l) => l.getAttribute('href'))).toEqual([
+      '/',
+      '/library',
+      '/settings/keys',
+    ]);
+  });
+
+  it('renders two tabs in the bottom tab bar for a readonly user', () => {
+    mockUseAuth.mockReturnValue({
+      user: { ...SAMPLE_USER, role: 'readonly' },
+      role: 'readonly',
       isAuthenticated: true,
       isLoading: false,
     });
