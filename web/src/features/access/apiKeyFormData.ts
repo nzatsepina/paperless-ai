@@ -28,16 +28,14 @@ export const SCOPES: { id: ApiScope; description: string }[] = [
     // reusing the word makes the admin row collide with the api row.
     //
     // ScopeChecklist renders this string with no role branching, so it is read
-    // by admins and members alike and must be true for both. The scope is the
-    // gate on every require_admin route \u2014 users (account_routes), settings and
-    // test-connection (settings_routes), failed/rebuild (index_routes) and
-    // document deletion (document_routes/_documents) \u2014 but role bounds scope:
-    // require_admin demands the admin ROLE too, so on a member's key the scope
-    // reaches only require_key_management, i.e. that member's own keys. The
-    // siblings enumerate their surface; this one did not, and named two areas
-    // while omitting three.
+    // by admins and members alike and must be true for both. Role bounds scope:
+    // require_admin demands the admin ROLE as well as this scope, so on a
+    // member's key the scope reaches only require_key_management — that
+    // member's own keys. Editing a key is owner-only for everyone, admins
+    // included (_update_api_key 404s a non-owner), which is why the string
+    // does not promise an admin full control of another user's key.
     description:
-      "Every admin endpoint \u2014 keys, users, settings, index rebuild and document deletion. Only keys work without an admin account, and then only your own. Grant sparingly.",
+      "Every admin endpoint — keys, users, settings, the index dashboard and rebuild, and document deletion. Without an admin account only keys work, and then only your own; editing a key is owner-only even for an admin. Grant sparingly.",
   },
 ];
 

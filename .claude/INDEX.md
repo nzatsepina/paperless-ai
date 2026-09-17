@@ -22,7 +22,7 @@ size — compress elsewhere first. Repos outgrowing a single-level index
 | Doc | Purpose | Verified |
 |-----|---------|----------|
 | [OVERVIEW](OVERVIEW.md) | system summary — always injected | 2026-08-17 @ 7fa2824 |
-| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-09-17 @ e3688d6 |
+| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-09-17 @ 70e1819 |
 | [MEMORY](MEMORY.md) | project memory index — always injected | 2026-07-19 @ beac32d |
 | [GATES](GATES.md) | gate runbook — the definition of "done" | 2026-09-07 @ 1c96762 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | module map, flows, state, boundaries | 2026-07-19 @ beac32d |
