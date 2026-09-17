@@ -27,7 +27,8 @@ import styles from './AppNavBar.module.css';
  * "API keys" is member-only rather than member-and-above because an admin
  * already reaches `/settings/keys` from the Settings side nav, and a
  * `readonly` user cannot use the screen at all (`RequireMember` turns them
- * away). Showing it only to Members is what keeps both surfaces at four tabs.
+ * away). Showing it only to Members is what keeps an admin's surfaces at four
+ * tabs — member-and-above would push an admin to five. A member sees three.
  */
 const NAV_LINKS: ReadonlyArray<{
   /** React Router `to` path. */
@@ -59,7 +60,8 @@ const NAV_LINKS: ReadonlyArray<{
  * render — following mediaman's surface-swap pattern.
  *
  * Desktop: `NavBar` with Brand, centre nav links, and `UserMenu` / `IndexStatusPill`.
- * Mobile: `MobileTopBar` carrying Brand + `UserMenu`; `BottomTabBar` with four tabs.
+ * Mobile: `MobileTopBar` carrying Brand + `UserMenu`; `BottomTabBar` with the
+ * role's visible tabs — four for an admin, three for a member, two for readonly.
  *
  * The `NAV_LINKS` constant is the single authoritative link definition; icons
  * are declared there so both surfaces stay in sync.

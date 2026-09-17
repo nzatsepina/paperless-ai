@@ -22,7 +22,13 @@ export const SCOPES: { id: ApiScope; description: string }[] = [
   },
   {
     id: 'admin',
-    description: 'Manage users and other keys. Grant sparingly.',
+    // Deliberately scoped wording: a key never exceeds its owner's role, so
+    // for a Member this grants key management over their OWN keys and nothing
+    // more — user administration additionally needs an admin account. The
+    // panels became reachable by Members when /settings/keys stopped being
+    // admin-only, and the previous copy ("Manage users and other keys") was
+    // untrue for every Member who can now read it.
+    description: 'Manage keys you own. User administration additionally requires an admin account.',
   },
 ];
 
