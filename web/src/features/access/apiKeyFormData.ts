@@ -32,7 +32,7 @@ export const SCOPES: { id: ApiScope; description: string }[] = [
     // lists and revokes every user's (key_store.list_all in _list_api_keys,
     // the role check in _delete_api_key), a member's only their own.
     description:
-      "Manage keys \u2014 your own, or every user's if you are an admin. User administration additionally requires an admin account. Grant sparingly.",
+      "Manage keys \u2014 your own, or list and revoke every user's if you are an admin. User administration additionally requires an admin account. Grant sparingly.",
   },
 ];
 
