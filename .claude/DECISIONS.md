@@ -335,7 +335,9 @@ to `/`.
 
 ## 2026-09-17 — PyJWT stays unpinned past 2.14; test harness follows both fetch boundaries
 
-CI went red on `main` with `test_access_jwt.py` failing across the board once PyJWT 2.14 resolved:
+CI went red on `main` once PyJWT 2.14 resolved: eight of the module's twenty tests failed, and the
+other twelve passed vacuously — a verifier that cannot fetch keys returns `None`, so every
+`assert ... is None` still held. The positive tests are what went red:
 `PyJWKClient.fetch_data` moved from calling `urllib.request.urlopen` directly to building an
 opener (carrying a no-redirect handler) and calling `opener.open`. The suite's fixtures patched
 only `urlopen`, so on 2.14 the fake JWKS was never served, `verify_access_email` reached for the
@@ -343,10 +345,18 @@ real network, and every verification returned `None` — reading as a broken ver
 stale fixture. `pyproject.toml`'s `PyJWT[crypto]~=2.13` admits both versions, so both are
 genuinely reachable: CI resolves the newest, a developer's venv may hold the older.
 
-Deliberately not pinning below 2.14: the change is a security hardening (JWKS fetches no longer
-follow redirects), and `PyJWT[crypto]` is already a declared dependency specifically so this
-auth path does not rest on another package's dependency graph (2026-09-06 entry) — pinning out a
-hardening to keep a test green is the cheat `GATES.md` warns against. Fixed by patching both
-boundaries: `_patch_fetch` in the test module is the one place that knows which PyJWT version is
-installed, shared by the `fetches` fixture and `test_a_malformed_key_set_does_not_raise`.
+Deliberately not pinning below 2.14. It is a multi-advisory security release, and one advisory —
+GHSA-2gx3-rcp4-g85q, limiting repeated JWKS refreshes triggered by unknown key ids — covers the
+very path `_key_for_kid` exists to rate-limit; the redirect rejection (GHSA-9v7f-9g4p-ffgj) is
+the change that moved the boundary. `PyJWT[crypto]` is already a declared dependency specifically
+so this auth path does not rest on another package's dependency graph (2026-09-06 entry), and
+CODE_GUIDELINES §15.3 makes `~=` admitting a minor bump the compliant behaviour — so a `<2.14`
+pin would be the deviation, not the safe default. Pinning out a hardening to keep a test green is
+the cheat `GATES.md` warns against, and no gate would have caught it: `pip-audit` reports no known
+vulnerability for 2.13.0, so a downpin passes `gate: python-dep-audit` silently. This record is
+the only thing standing against that.
+
+Fixed by patching both boundaries. `_patch_fetch` in the test module is the one place that encodes
+them; it sniffs no version, patching both names unconditionally, so half is inert on any given
+release. It is shared by the `fetches` fixture and `test_a_malformed_key_set_does_not_raise`.
 **Affects:** `tests/unit/search/test_access_jwt.py`, `pyproject.toml`, `.claude/docs/TESTING.md`

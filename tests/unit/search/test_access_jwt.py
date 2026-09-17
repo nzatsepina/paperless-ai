@@ -76,7 +76,7 @@ def _patch_fetch(monkeypatch, responder) -> None:
         """Stands in for what ``build_opener`` returns; ``open`` is all the
         client calls, and the handlers are its business, not the fixture's."""
 
-        def open(self, target, **_k):  # noqa: A003 - mirrors urllib's own name
+        def open(self, target, **_k):  # named for urllib's own method
             return responder(target)
 
     monkeypatch.setattr(
@@ -249,7 +249,8 @@ def test_unknown_kid_costs_at_most_one_refetch(key, fetches, monkeypatch):
     comes from the *unverified* header — so random kids would cost one HTTPS
     round trip each, on the path before every credential check.
 
-    Counting happens at ``urlopen``, the real network boundary. Patching
+    Counting happens at PyJWT's HTTP boundary (see :func:`_patch_fetch`),
+    below ``fetch_data``. Patching
     ``get_jwk_set`` would make the fetch unreachable and the assertion
     vacuous; patching ``fetch_data`` would stop the key-set cache being
     populated and make every call look like a fetch. Both were tried.
