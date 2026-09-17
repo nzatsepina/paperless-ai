@@ -638,8 +638,23 @@ The authoritative nav link list is the `NAV_LINKS` constant in
 | Library | `/library` | All authenticated users |
 | Index | `/index` | Admin role only |
 | Settings | `/settings` | Admin role only |
+| API keys | `/settings/keys` | Member role only |
 
-Adding, removing, or renaming a nav link requires editing only `NAV_LINKS`.
+Two visibility flags on a `NAV_LINKS` entry express the Condition column, and
+they are mutually exclusive: `adminOnly` renders the link for the `admin` role
+alone, `memberOnly` for the `member` role alone. An entry carrying neither is
+shown to every authenticated user.
+
+"API keys" is `memberOnly` rather than member-and-above on purpose. A Member
+manages their own keys server-side, so they need a way in; an admin already
+reaches the same screen from the Settings side rail, so giving them a second
+route would only spend a nav slot — and a `readonly` user cannot use the screen
+at all. The effect is that no role sees more than four tabs: four for an admin,
+three for a Member, two for `readonly`.
+
+Adding, removing, or renaming a nav link requires editing only `NAV_LINKS` —
+except when it introduces a new Condition, which also belongs in the table and
+the flag description above.
 
 ### 12.3 Document-preview pattern
 
