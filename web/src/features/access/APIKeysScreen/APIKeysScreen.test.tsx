@@ -143,6 +143,33 @@ describe('APIKeysScreen', () => {
     expect(screen.getByText(/could not load/i)).toBeInTheDocument();
   });
 
+  it('shows the full settings rail to an admin', () => {
+    mockKeys.mockReturnValue(keysResult({ isSuccess: true, data: { keys: KEYS } }));
+    renderScreen();
+    expect(screen.getByRole('link', { name: /users/i })).toBeInTheDocument();
+  });
+
+  it('shows a member only their own API Keys rail entry', () => {
+    // Every other rail item routes to an admin-gated page that would bounce a
+    // member back to `/`, so offering them would be a dead link.
+    mockAuth.mockReturnValue({
+      user: {
+        id: 1,
+        username: 'alex.morgan',
+        display_name: 'Alex Morgan',
+        email: 'alex@home.lan',
+        role: 'member',
+        status: 'active',
+        created_at: '2024-09-12T00:00:00Z',
+        last_login_at: null,
+      },
+    });
+    mockKeys.mockReturnValue(keysResult({ isSuccess: true, data: { keys: KEYS } }));
+    renderScreen();
+    expect(screen.getByRole('link', { name: /api keys/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /users/i })).not.toBeInTheDocument();
+  });
+
   it('renders the API Keys page title', () => {
     mockKeys.mockReturnValue(keysResult({ isSuccess: true, data: { keys: KEYS } }));
     renderScreen();

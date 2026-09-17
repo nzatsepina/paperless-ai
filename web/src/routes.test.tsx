@@ -176,6 +176,25 @@ describe('AppRoutes', () => {
     await waitFor(() => expect(screen.getByTestId('keys-page')).toBeInTheDocument());
   });
 
+  it('renders the keys page for a member at /settings/keys', async () => {
+    // A Member manages their own keys server-side (require_key_management,
+    // spec §4.3); gating this screen on admin contradicted that and left
+    // Members unable to mint the keys the API grants them.
+    const member = { ...SAMPLE_USER, role: 'member' as const };
+    mockUseSetupStatus.mockReturnValue(setupStatusResult({ isSuccess: true, data: { needed: false } }));
+    mockUseMe.mockReturnValue(meResult({ isSuccess: true, data: { user: member } }));
+    renderAt('/settings/keys');
+    await waitFor(() => expect(screen.getByTestId('keys-page')).toBeInTheDocument());
+  });
+
+  it('redirects a readonly user away from /settings/keys to the app', async () => {
+    const readonly = { ...SAMPLE_USER, role: 'readonly' as const };
+    mockUseSetupStatus.mockReturnValue(setupStatusResult({ isSuccess: true, data: { needed: false } }));
+    mockUseMe.mockReturnValue(meResult({ isSuccess: true, data: { user: readonly } }));
+    renderAt('/settings/keys');
+    await waitFor(() => expect(screen.getByTestId('search-page')).toBeInTheDocument());
+  });
+
   it('redirects a non-admin away from /settings/users to the app', async () => {
     const member = { ...SAMPLE_USER, role: 'member' as const };
     mockUseSetupStatus.mockReturnValue(setupStatusResult({ isSuccess: true, data: { needed: false } }));

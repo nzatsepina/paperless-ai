@@ -2,7 +2,8 @@
  * API Keys page — the `/settings/keys` route host.
  *
  * Thin `pages`-tier composition: `Page` shell → `AppNavBar` → `APIKeysScreen`.
- * Admin-gating is enforced by the route guard in `routes.tsx`.
+ * Member-or-above gating is enforced by the route guard in `routes.tsx` —
+ * a Member manages their own keys, matching what the server permits.
  *
  * `Page` provides the `--colour-bg` background and `100dvh` minimum height,
  * keeping this page consistent with every other authenticated page.

@@ -17,10 +17,17 @@ import styles from './AppNavBar.module.css';
  * The canonical navigation link definitions.
  *
  * This is the single authoritative list — add, remove, or rename links here
- * only. The `adminOnly` flag controls visibility: `true` means the link is
- * hidden unless the authenticated user holds the `admin` role.
+ * only. Two mutually exclusive visibility flags control who sees a link:
+ * `adminOnly` renders it only for the `admin` role, `memberOnly` only for the
+ * `member` role. A link with neither is shown to everyone.
  *
- * Final set: Search · Library · Index (admin-only) · Settings (admin-only).
+ * Final set: Search · Library · Index (admin-only) · Settings (admin-only) ·
+ * API keys (member-only).
+ *
+ * "API keys" is member-only rather than member-and-above because an admin
+ * already reaches `/settings/keys` from the Settings side nav, and a
+ * `readonly` user cannot use the screen at all (`RequireMember` turns them
+ * away). Showing it only to Members is what keeps both surfaces at four tabs.
  */
 const NAV_LINKS: ReadonlyArray<{
   /** React Router `to` path. */
@@ -31,6 +38,8 @@ const NAV_LINKS: ReadonlyArray<{
   icon: BottomTabItem['icon'];
   /** When `true`, the link renders only for `admin` users. */
   adminOnly?: true;
+  /** When `true`, the link renders only for `member` users. */
+  memberOnly?: true;
   /** When `true`, matches the route exactly (prevents `/` matching `/library`). */
   end?: true;
 }> = [
@@ -38,6 +47,7 @@ const NAV_LINKS: ReadonlyArray<{
   { to: '/library', label: 'Library',  icon: 'library' },
   { to: '/index',   label: 'Index',    icon: 'index',    adminOnly: true },
   { to: '/settings', label: 'Settings', icon: 'settings', adminOnly: true },
+  { to: '/settings/keys', label: 'API keys', icon: 'key', memberOnly: true },
 ] as const;
 
 /**
@@ -84,7 +94,9 @@ export function AppNavBar(): React.ReactElement | null {
   const initials = deriveInitials(user.display_name, user.username);
 
   const visibleLinks = NAV_LINKS.filter(
-    (link) => link.adminOnly !== true || role === 'admin',
+    (link) =>
+      (link.adminOnly !== true || role === 'admin') &&
+      (link.memberOnly !== true || role === 'member'),
   );
 
   // ── Shared slots ──────────────────────────────────────────────────────────
