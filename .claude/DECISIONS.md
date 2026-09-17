@@ -335,9 +335,12 @@ to `/`.
 
 ## 2026-09-17 — PyJWT stays unpinned past 2.14; test harness follows both fetch boundaries
 
-CI went red on `main` once PyJWT 2.14 resolved: eight of the module's twenty tests failed, and the
-other twelve passed vacuously — a verifier that cannot fetch keys returns `None`, so every
-`assert ... is None` still held. The positive tests are what went red:
+CI went red on `main` once PyJWT 2.14 resolved: eight of the module's twenty tests failed, and nine
+of the other twelve passed vacuously — a verifier that cannot fetch keys returns `None`, so every
+`assert ... is None` on the JWKS path still held. The three that passed for real
+(`test_access_config_needs_both_variables`, `test_garbage_and_absent_tokens_are_refused`,
+`test_the_per_kid_key_cache_stays_disabled`) never reach that path. The positive tests are what
+went red:
 `PyJWKClient.fetch_data` moved from calling `urllib.request.urlopen` directly to building an
 opener (carrying a no-redirect handler) and calling `opener.open`. The suite's fixtures patched
 only `urlopen`, so on 2.14 the fake JWKS was never served, `verify_access_email` reached for the
