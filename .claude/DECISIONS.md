@@ -313,3 +313,22 @@ another history rewrite of an already-rewritten branch. Both breaks — the `/ap
 and the registry move — are stated explicitly and neither is hidden. Not worth re-orphaning the
 KB stamps a third time, which is a defect this branch has already produced twice.
 **Affects:** `.claude/DECISIONS.md`, `src/common/config/_loader.py`
+
+## 2026-09-17 — `/settings/keys` gated on Member, not Admin
+
+The SPA gated the API-keys screen on `admin` (`RequireAdmin` in `web/src/routes.tsx`), but the
+server already permits Member-and-above: `require_key_management` (`src/search/deps.py`) ranks
+the endpoint at `member`, and `_list_api_keys` (`src/search/api_key_routes.py`) scopes a
+non-admin's listing to their own keys. The SPA contradicted its own backend contract and left
+Members with no way to mint keys the API already grants them.
+
+Fixed with a new `RequireMember`/`MemberGate` guard (`web/src/routes.tsx`), mirroring
+`RequireAdmin`/`AdminGate`. `/settings/keys` now uses it; `/settings` and `/settings/users` stay
+admin-only. `AppNavBar.tsx`'s `NAV_LINKS` gained a `memberOnly` flag and an "API keys" entry shown
+only to the `member` role (an admin already reaches the screen from the Settings side nav; a
+`readonly` user is turned away by `MemberGate` regardless). `SettingsLayout.tsx` gained an
+exported `MEMBER_SETTINGS_NAV_GROUPS` (just the "Access control → API Keys" item) and an optional
+`groups` prop, defaulting to the full admin set; `APIKeysScreen.tsx` passes the member rail when
+the caller is not an admin, so a Member's side nav doesn't offer links that would bounce them back
+to `/`.
+**Affects:** `web/src/routes.tsx`, `web/src/features/shell/AppNavBar/AppNavBar.tsx`, `web/src/components/layout/SettingsLayout/SettingsLayout.tsx`, `web/src/features/access/APIKeysScreen/APIKeysScreen.tsx`, `web/src/pages/KeysPage.tsx`, `.claude/docs/modules/web.md`
