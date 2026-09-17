@@ -7,11 +7,11 @@ authenticating here, and a test that stubs the verifier out cannot tell
 whether that argument is present.
 
 No JWKS server is needed. A locally generated RSA key is served by
-monkeypatching ``urlopen`` — the real network boundary — so PyJWT's own caching
-and refresh logic runs and the signature, issuer, audience and expiry checks
-all execute against tokens this module mints. Patching higher up was tried and
-was wrong: ``get_jwk_set`` makes the fetch unreachable, and ``fetch_data`` is
-what populates the cache.
+monkeypatching PyJWT's HTTP boundary (see ``_patch_fetch``) — so PyJWT's own
+caching and refresh logic runs and the signature, issuer, audience and expiry
+checks all execute against tokens this module mints. Patching higher up was
+tried and was wrong: ``get_jwk_set`` makes the fetch unreachable, and
+``fetch_data`` is what populates the cache.
 """
 
 from __future__ import annotations
@@ -60,6 +60,34 @@ def _fake_response(payload: dict):
     return _R()
 
 
+def _patch_fetch(monkeypatch, responder) -> None:
+    """Point PyJWT's JWKS fetch at *responder*, whichever boundary it uses.
+
+    ``responder(target)`` returns the fake response. Up to PyJWT 2.13
+    ``PyJWKClient.fetch_data`` calls ``urllib.request.urlopen``; 2.14 builds an
+    opener with a no-redirect handler and calls ``opener.open``. The declared
+    pin (``PyJWT[crypto]~=2.13``) admits both, so both are patched — patching
+    one lets the other version reach the real network, where every verification
+    returns ``None`` and the failure looks like a broken verifier rather than a
+    stale fixture.
+    """
+
+    class _Opener:
+        """Stands in for what ``build_opener`` returns; ``open`` is all the
+        client calls, and the handlers are its business, not the fixture's."""
+
+        def open(self, target, **_k):  # named for urllib's own method
+            return responder(target)
+
+    monkeypatch.setattr(
+        "jwt.jwks_client.urllib.request.urlopen",
+        lambda *a, **_k: responder(a[0] if a else ""),
+    )
+    monkeypatch.setattr(
+        "jwt.jwks_client.urllib.request.build_opener", lambda *_a, **_k: _Opener()
+    )
+
+
 @pytest.fixture(scope="module")
 def key() -> rsa.RSAPrivateKey:
     """One RSA key for the module — generation is the slow part."""
@@ -73,7 +101,7 @@ KID = "test-key-1"
 def fetches(monkeypatch, key):
     """Serve a JWK set built from *key*, and count the network fetches.
 
-    Patches ``urlopen`` — the real boundary — so PyJWT's own caching and
+    Serves the set through :func:`_patch_fetch`, so PyJWT's own caching and
     refresh logic runs. Returns the call list, so a test can assert how many
     fetches an implementation actually costs.
     """
@@ -95,21 +123,20 @@ def fetches(monkeypatch, key):
             }
         ]
     }
-    # Patch urlopen, the real network boundary. Patching get_jwk_set would
-    # make the fetch unreachable and any "no fetch" assertion vacuous;
-    # patching fetch_data would stop the key-set cache being populated, so
-    # every call would look like a fetch. Both were tried and both were wrong.
+    # Patch the network boundary itself. Patching get_jwk_set would make the
+    # fetch unreachable and any "no fetch" assertion vacuous; patching
+    # fetch_data would stop the key-set cache being populated, so every call
+    # would look like a fetch. Both were tried and both were wrong.
     # Record the URL, do not discard it. A fixture that accepts any URL lets
     # the key-set path be hardcoded to one tenant with the whole suite green —
     # a silent, total authentication outage reached by an ordinary refactor.
     fetches: list[str] = []
 
-    def _urlopen(*a, **_k):
-        target = a[0] if a else ""
+    def _serve(target):
         fetches.append(getattr(target, "full_url", target))
         return _fake_response(jwk_set_dict)
 
-    monkeypatch.setattr("jwt.jwks_client.urllib.request.urlopen", _urlopen)
+    _patch_fetch(monkeypatch, _serve)
 
     import search.access_jwt as mod
 
@@ -222,7 +249,8 @@ def test_unknown_kid_costs_at_most_one_refetch(key, fetches, monkeypatch):
     comes from the *unverified* header — so random kids would cost one HTTPS
     round trip each, on the path before every credential check.
 
-    Counting happens at ``urlopen``, the real network boundary. Patching
+    Counting happens at PyJWT's HTTP boundary (see :func:`_patch_fetch`),
+    below ``fetch_data``. Patching
     ``get_jwk_set`` would make the fetch unreachable and the assertion
     vacuous; patching ``fetch_data`` would stop the key-set cache being
     populated and make every call look like a fetch. Both were tried.
@@ -275,10 +303,7 @@ def test_a_malformed_key_set_does_not_raise(key, monkeypatch):
     runs before the cookie and bearer paths, that is a 500 on every request in
     the application, administrators included, with no way back in.
     """
-    monkeypatch.setattr(
-        "jwt.jwks_client.urllib.request.urlopen",
-        lambda *a, **k: _fake_html_response(),
-    )
+    _patch_fetch(monkeypatch, lambda _target: _fake_html_response())
     import search.access_jwt as mod
 
     mod._jwks_client.cache_clear()
