@@ -22,14 +22,14 @@ size — compress elsewhere first. Repos outgrowing a single-level index
 | Doc | Purpose | Verified |
 |-----|---------|----------|
 | [OVERVIEW](OVERVIEW.md) | system summary — always injected | 2026-08-17 @ 7fa2824 |
-| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-09-17 @ ab0f069 |
+| [DECISIONS](DECISIONS.md) | append-only decision log | 2026-09-17 @ 70e1819 |
 | [MEMORY](MEMORY.md) | project memory index — always injected | 2026-07-19 @ beac32d |
 | [GATES](GATES.md) | gate runbook — the definition of "done" | 2026-09-07 @ 1c96762 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | module map, flows, state, boundaries | 2026-07-19 @ beac32d |
 | [OPERATIONS](docs/OPERATIONS.md) | heartbeats, health, halts, runbook | 2026-09-06 @ e176f1d |
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | one image, four processes; CI → GHCR | 2026-09-07 @ e176f1d |
 | [CONFIGURATION](docs/CONFIGURATION.md) | config-in-DB, precedence, hot-load, defaults | 2026-09-06 @ e176f1d |
-| [TESTING](docs/TESTING.md) | suites, commands, gates, known skips | 2026-08-17 @ 7fa2824 |
+| [TESTING](docs/TESTING.md) | suites, commands, gates, known skips | 2026-09-17 @ 70e1819 |
 | [SECURITY](docs/SECURITY.md) | auth, RBAC, quotas, injection defences, headers | 2026-09-06 @ e176f1d |
 | [API](docs/API.md) | REST + MCP + NDJSON surface and status mapping | 2026-09-06 @ e176f1d |
 | [PIPELINES](docs/PIPELINES.md) | OCR, classification, indexing, search — stage by stage | 2026-08-17 @ 7fa2824 |

@@ -332,3 +332,21 @@ exported `MEMBER_SETTINGS_NAV_GROUPS` (just the "Access control → API Keys" it
 the caller is not an admin, so a Member's side nav doesn't offer links that would bounce them back
 to `/`.
 **Affects:** `web/src/routes.tsx`, `web/src/features/shell/AppNavBar/AppNavBar.tsx`, `web/src/components/layout/SettingsLayout/SettingsLayout.tsx`, `web/src/features/access/APIKeysScreen/APIKeysScreen.tsx`, `web/src/pages/KeysPage.tsx`, `.claude/docs/modules/web.md`
+
+## 2026-09-17 — PyJWT stays unpinned past 2.14; test harness follows both fetch boundaries
+
+CI went red on `main` with `test_access_jwt.py` failing across the board once PyJWT 2.14 resolved:
+`PyJWKClient.fetch_data` moved from calling `urllib.request.urlopen` directly to building an
+opener (carrying a no-redirect handler) and calling `opener.open`. The suite's fixtures patched
+only `urlopen`, so on 2.14 the fake JWKS was never served, `verify_access_email` reached for the
+real network, and every verification returned `None` — reading as a broken verifier rather than a
+stale fixture. `pyproject.toml`'s `PyJWT[crypto]~=2.13` admits both versions, so both are
+genuinely reachable: CI resolves the newest, a developer's venv may hold the older.
+
+Deliberately not pinning below 2.14: the change is a security hardening (JWKS fetches no longer
+follow redirects), and `PyJWT[crypto]` is already a declared dependency specifically so this
+auth path does not rest on another package's dependency graph (2026-09-06 entry) — pinning out a
+hardening to keep a test green is the cheat `GATES.md` warns against. Fixed by patching both
+boundaries: `_patch_fetch` in the test module is the one place that knows which PyJWT version is
+installed, shared by the `fetches` fixture and `test_a_malformed_key_set_does_not_raise`.
+**Affects:** `tests/unit/search/test_access_jwt.py`, `pyproject.toml`, `.claude/docs/TESTING.md`
