@@ -771,6 +771,7 @@ def _register_search_tools(
                             "correspondent": hit.document.correspondent,
                             "document_type": hit.document.document_type,
                             "created": hit.document.created,
+                            "tag_ids": list(hit.document.tag_ids),
                             "snippet": hit.snippet,
                             "paperless_url": _paperless_url(base, hit.document.id),
                         }
