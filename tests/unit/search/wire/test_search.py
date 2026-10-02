@@ -61,3 +61,66 @@ def test_filter_request_rejects_over_64_tag_ids() -> None:
     """A filter naming more than 64 tags is rejected, matching the GET bound (L16)."""
     with pytest.raises(ValidationError):
         FilterRequest(tag_ids=list(range(65)))
+
+
+# ---------------------------------------------------------------------------
+# FilterRequest — malformed caller filters fail closed (spec D3, D11)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", [{"tag_id": 5}, {"tags": [5]}])
+def test_filter_request_rejects_an_unknown_key(raw: dict[str, object]) -> None:
+    """A typo'd key would otherwise widen a scoped search with no error."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        FilterRequest.model_validate(raw)
+
+
+def test_filter_request_rejects_an_explicitly_empty_tag_list() -> None:
+    with pytest.raises(ValidationError, match="tag_ids must not be empty"):
+        FilterRequest.model_validate({"tag_ids": []})
+
+
+@pytest.mark.parametrize("raw", [{}, {"correspondent_id": 3}])
+def test_filter_request_without_tag_ids_means_no_tag_constraint(
+    raw: dict[str, object],
+) -> None:
+    assert FilterRequest.model_validate(raw).tag_ids == []
+
+
+@pytest.mark.parametrize("field", ["date_from", "date_to"])
+@pytest.mark.parametrize(
+    "value", ["junk", "2025-04-25junk", "20250425", "2025-W17-5", "2025-13-01"]
+)
+def test_filter_request_rejects_a_non_iso_date(field: str, value: str) -> None:
+    with pytest.raises(ValidationError, match="must be an ISO date"):
+        FilterRequest.model_validate({field: value})
+
+
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [
+        ("2025-04-25", "2025-04-25"),
+        ("2025-04-25T00:00:00+00:00", "2025-04-25"),
+        ("2025-04-25T23:30:00-05:00", "2025-04-25"),
+    ],
+)
+def test_filter_request_stores_the_date_of_an_iso_value(
+    value: str, stored: str
+) -> None:
+    request = FilterRequest.model_validate({"date_from": value, "date_to": value})
+    assert (request.date_from, request.date_to) == (stored, stored)
+
+
+def test_filter_request_accepts_an_inverted_date_range() -> None:
+    """``date_from`` after ``date_to`` narrows to nothing — it cannot leak, so
+    it is not rejected."""
+    request = FilterRequest.model_validate(
+        {"date_from": "2025-12-31", "date_to": "2025-01-01"}
+    )
+    assert (request.date_from, request.date_to) == ("2025-12-31", "2025-01-01")
+
+
+def test_search_request_rejects_a_mis_keyed_filters_container() -> None:
+    """``filter`` for ``filters`` would otherwise read as "no filters"."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SearchRequest.model_validate({"query": "x", "filter": {"tag_ids": [1]}})
