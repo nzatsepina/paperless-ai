@@ -15,7 +15,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from search.dates import normalise_iso_date
 from search.models import NoMatchReason
@@ -61,18 +68,27 @@ class FilterRequest(BaseModel):
 
     date_from: str | None = None
     date_to: str | None = None
-    correspondent_id: int | None = None
-    document_type_id: int | None = None
+    correspondent_id: StrictInt | None = Field(default=None, gt=0)
+    document_type_id: StrictInt | None = Field(default=None, gt=0)
     # Bounded to 64 to match the GET ``/api/documents`` counterpart
     # (``routes.py``); a filter naming more tags than any real instance holds
     # is malformed, and an unbounded list is a cheap payload-bloat vector.
-    tag_ids: list[int] = Field(default_factory=list, max_length=64)
+    tag_ids: list[StrictInt] = Field(default_factory=list, max_length=64)
 
     @field_validator("date_from", "date_to")
     @classmethod
     def _require_iso_date(cls, value: str | None) -> str | None:
         """Accept an ISO date or timestamp; store its ``YYYY-MM-DD`` date."""
         return None if value is None else _caller_iso_date(value)
+
+    @field_validator("tag_ids")
+    @classmethod
+    def _validate_tag_ids_positive(cls, v: list[StrictInt]) -> list[StrictInt]:
+        """Reject tag_ids with non-positive values (security: ids must be > 0)."""
+        for tag_id in v:
+            if tag_id <= 0:
+                raise ValueError("tag_ids must only contain positive integers")
+        return v
 
     @model_validator(mode="after")
     def _reject_empty_tag_ids(self) -> FilterRequest:

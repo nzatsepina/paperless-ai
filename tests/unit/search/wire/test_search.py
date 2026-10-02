@@ -53,14 +53,14 @@ def test_search_request_accepts_a_query_at_the_maximum_length() -> None:
 
 def test_filter_request_accepts_up_to_64_tag_ids() -> None:
     """A filter naming up to 64 tags validates (L16)."""
-    filters = FilterRequest(tag_ids=list(range(64)))
+    filters = FilterRequest(tag_ids=list(range(1, 65)))
     assert len(filters.tag_ids) == 64
 
 
 def test_filter_request_rejects_over_64_tag_ids() -> None:
     """A filter naming more than 64 tags is rejected, matching the GET bound (L16)."""
     with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=list(range(65)))
+        FilterRequest(tag_ids=list(range(1, 66)))
 
 
 # ---------------------------------------------------------------------------
@@ -124,3 +124,84 @@ def test_search_request_rejects_a_mis_keyed_filters_container() -> None:
     """``filter`` for ``filters`` would otherwise read as "no filters"."""
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         SearchRequest.model_validate({"query": "x", "filter": {"tag_ids": [1]}})
+
+
+# FilterRequest — strict int validation (security: reject lax coercion of booleans, strings, floats)
+
+
+def test_filter_request_rejects_tag_ids_with_boolean() -> None:
+    """A filter with a boolean in tag_ids is rejected — strict int only."""
+    with pytest.raises(ValidationError):
+        FilterRequest(tag_ids=[True])
+
+
+def test_filter_request_rejects_tag_ids_with_string() -> None:
+    """A filter with a string in tag_ids is rejected — no lax coercion of "5"."""
+    with pytest.raises(ValidationError):
+        FilterRequest(tag_ids=["5"])
+
+
+def test_filter_request_rejects_tag_ids_with_float() -> None:
+    """A filter with a float in tag_ids is rejected — strict int only."""
+    with pytest.raises(ValidationError):
+        FilterRequest(tag_ids=[5.0])
+
+
+def test_filter_request_rejects_tag_ids_with_zero() -> None:
+    """A filter with zero in tag_ids is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(tag_ids=[0])
+
+
+def test_filter_request_rejects_tag_ids_with_negative() -> None:
+    """A filter with negative ids in tag_ids is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(tag_ids=[-1])
+
+
+def test_filter_request_accepts_tag_ids_with_valid_integers() -> None:
+    """A filter with valid positive integers in tag_ids validates."""
+    filters = FilterRequest(tag_ids=[1, 2, 3])
+    assert filters.tag_ids == [1, 2, 3]
+
+
+def test_filter_request_rejects_correspondent_id_with_boolean() -> None:
+    """A filter with correspondent_id=true is rejected — strict int only."""
+    with pytest.raises(ValidationError):
+        FilterRequest(correspondent_id=True)  # type: ignore[arg-type]
+
+
+def test_filter_request_rejects_correspondent_id_with_zero() -> None:
+    """A filter with correspondent_id=0 is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(correspondent_id=0)
+
+
+def test_filter_request_rejects_correspondent_id_with_negative() -> None:
+    """A filter with correspondent_id=-1 is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(correspondent_id=-1)
+
+
+def test_filter_request_accepts_correspondent_id_with_valid_integer() -> None:
+    """A filter with valid positive correspondent_id validates."""
+    filters = FilterRequest(correspondent_id=42)
+    assert filters.correspondent_id == 42
+
+
+def test_filter_request_rejects_document_type_id_with_zero() -> None:
+    """A filter with document_type_id=0 is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(document_type_id=0)
+
+
+def test_filter_request_rejects_document_type_id_with_negative() -> None:
+    """A filter with document_type_id=-1 is rejected — ids must be positive."""
+    with pytest.raises(ValidationError):
+        FilterRequest(document_type_id=-1)
+
+
+def test_filter_request_accepts_document_type_id_with_valid_integer() -> None:
+    """A filter with valid positive document_type_id validates."""
+    filters = FilterRequest(document_type_id=99)
+    assert filters.document_type_id == 99
