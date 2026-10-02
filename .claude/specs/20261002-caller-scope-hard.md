@@ -74,6 +74,12 @@ caller-supplied filters only.
   MCP and HTTP (D11). *Why:* a typo'd key (`tag_id`) or `tag_ids: []`
   today yields an unscoped search with no error — a hard-scope contract with a
   fail-open input is hollow (CODE_GUIDELINES §1.11).
+  *(Extended at spec gate round 3; presented for the human's approval with this
+  spec.)* The rule covers the key that **carries** the filters too: a mis-keyed
+  container (`filter`, `Filters`) is rejected on both surfaces, not silently
+  read as "no filters" (L11). *Why:* the same sentence applies verbatim — a
+  caller that types `filter` for `filters` gets the Origin's unscoped result
+  with no error, one level above the check that rejects `tag_id`.
 - **D4 — results carry `tag_ids`.** `semantic_search`, `deep_search` (same
   `SourceDocument` type) and `keyword_search` results include each document's
   tag ids. *Why:* lets a client verify the scope held, and gives a post-deploy
@@ -105,10 +111,12 @@ caller-supplied filters only.
   twins keep the caller scope, every twin equals what `broaden_plan()` + scope
   resolves to, so the broadened searches are a subset of pass 1 whenever every
   twin ran. Broaden-and-retry then fires **only when `max_specs` truncated the
-  twins** — that is, whenever `_append_unfiltered_twins()` hit the cap before
-  every filtered spec got its twin (`len(resolved)` plus the number of filtered
-  specs exceeds `max_specs`; the loop appends a twin, then re-checks
-  `len(out) >= max_specs`, so partial truncation also counts). The simplest
+  twins** — that is, whenever some filtered spec's twin key
+  (`_intersect(_EMPTY_FILTERS, scope)` with that spec's mode and text) is absent
+  from pass 1's key set, i.e. the cap stopped `_append_unfiltered_twins()`
+  before a *non-duplicate* twin was appended. (A count of filtered specs
+  over-predicts: a twin equal to its original hits the `if key in seen:
+  continue` dedup and never consumes the cap.) The simplest
   case, used by the tests, is a plan already at `max_specs`, where no twin is
   appended at all; at least one spec must have resolved to a real planner
   filter. (The planner itself caps the plan at
@@ -160,6 +168,7 @@ Every path where `ui_filters` can be dropped or loosened. Anchors are
 | L8 | keyword_search | `src/search/core.py` — `SearchCore.keyword_search()` → `keyword_document_search()` (`src/store/reader/_ranked.py`) / `list_documents()` (`_browse.py`, via `build_browse_where()` → `build_filters()`) | none | Clean |
 | L9 | fetch_documents | `SearchCore.fetch_documents()` → `assemble_fetched()` (`src/search/fetch.py`) | no filters argument; any id fetchable | Has no scope to drop; out of scope (see Rejected) |
 | L10 | deep_search, web | `SearchCore._cache_key()` → `build_cache_key(filters=ui_filters, …)` (`src/search/cache.py`), store from `get_search_result_cache()` | keyed on the caller filters | Clean; in-process, so a restart clears pre-fix entries |
+| L11 | MCP all, HTTP | HTTP: `src/search/wire/search.py` — `SearchRequest` (no `model_config`, so Pydantic's default `extra="ignore"`). MCP: FastMCP's per-tool argument model (`ArgModelBase` in `mcp.server.fastmcp.utilities.func_metadata`, `model_config` sets only `arbitrary_types_allowed`) | `{"filter": {"tag_ids": [N]}}` or `{"Filters": …}` → `filters=None` → unscoped search, no error (probed, see *Verification evidence*) | **Fail-open boundary** (the container key) |
 
 ## Design
 
@@ -177,7 +186,7 @@ Every path where `ui_filters` can be dropped or loosened. Anchors are
 - Call sites to update (all grep-verified): `src/search/core.py` —
   `_retrieve_with_broaden()` (×2) and `_refine()`; `src/search/api.py` builds the
   `Retriever` (constructor unchanged). Tests calling `retrieve(specs)` gain
-  `scope=None` (about 28 call sites): `tests/unit/search/test_retriever_multispec.py`,
+  `scope=None` (27 call sites — measured in *Verification evidence*): `tests/unit/search/test_retriever_multispec.py`,
   `tests/unit/search/test_retriever.py`,
   `tests/integration/test_salary_april_regression.py`. (`tests/helpers/search.py`
   and `tests/e2e/test_index_then_search.py` only construct a `Retriever`.)
@@ -235,16 +244,40 @@ ignored"), mcp_server `_to_search_filters()` ("Unknown keys are ignored").
 
 ## Boundary validation (D3)
 
-All on `FilterRequest` (`src/search/wire/search.py`), the single parse for both
-surfaces (MCP via `_to_search_filters()`, HTTP via `SearchRequest.filters`), so
-every check holds identically on MCP and HTTP.
+The checks *inside* `filters` all live on `FilterRequest`
+(`src/search/wire/search.py`), the single parse for both surfaces (MCP via
+`_to_search_filters()`, HTTP via `SearchRequest.filters`), so they hold
+identically on MCP and HTTP. The check on the *container key* (L11) cannot live
+there — a mis-keyed container never reaches `FilterRequest` — so each surface
+gets its own (row 1 and "Mis-keyed container" below).
 
 | Check | HTTP | MCP | Evidence the SPA is unaffected |
 |---|---|---|---|
+| Unknown top-level key / tool argument → reject (L11) | `SearchRequest`: `model_config = ConfigDict(extra="forbid")` | `_StrictFastMCP.call_tool()` (below) | Both senders post exactly `{ query, filters }`: `useStreamingSearch.ts` passes `{ query, filters }` to `streamSearch()`; `MatchCard.tsx` calls `useSearch({ query, filters })` → `search(req)` |
 | Unknown key → reject (`model_config = ConfigDict(extra="forbid")`) | yes | yes | The SPA sends exactly the five known keys: `paramsToFilters()` (`web/src/lib/parseSearchParams.ts`) builds them, `web/src/features/search/useStreamingSearch.ts` posts `{ query, filters }` verbatim |
 | `date_from` / `date_to` not a valid ISO date → reject | yes | yes | SPA dates come from native `type="date"` inputs (`web/src/components/patterns/FilterControls/FilterControls.tsx`), always `YYYY-MM-DD` |
 | Explicit `tag_ids: []` → reject | yes | yes | Today the SPA *always* sends `tag_ids`, `[]` when no tag is chosen (`paramsToFilters()` always sets it). The SPA change below omits it when empty, so an untagged web search sends no `tag_ids` key (D11) |
 
+- **Mis-keyed container (L11).** *HTTP:* `SearchRequest` gains
+  `model_config = ConfigDict(extra="forbid")` (its fields are exactly `query` and
+  `filters`), so `{"filter": …}` is a 422. *MCP:* FastMCP drops undeclared
+  argument names in its generated argument model before the tool function runs,
+  so the tool body — and `_dispatch()` — never sees them; a check there is
+  impossible. FastMCP also registers its handler with
+  `call_tool(validate_input=False)` (`FastMCP._setup_handlers()`), so adding
+  `additionalProperties: false` to the published `inputSchema` would enforce
+  nothing on the server. The mechanism is therefore a module-private
+  `_StrictFastMCP(FastMCP)` in `src/search/mcp_server.py` that overrides the
+  public `call_tool(name, arguments)`: it looks the tool up in
+  `await self.list_tools()`, and if any key of `arguments` is not in that tool's
+  `inputSchema["properties"]` it raises `ToolError` naming the unknown key(s);
+  otherwise it delegates to `super().call_tool()`. `build_mcp_app()` constructs
+  `_StrictFastMCP` instead of `FastMCP`. It uses only public FastMCP methods and
+  covers all five tools at once; the client receives `isError: true` with that
+  message (probed). An unknown tool name is left to FastMCP's own error.
+  Rejected: setting `extra="forbid"` on each tool's generated argument model
+  after registration — also probed and works, but reaches through the private
+  `FastMCP._tool_manager` and mutates a library-generated class.
 - **Date rule.** A value is accepted only when `normalise_iso_date()`
   (`src/search/dates.py`) returns a date **and** the whole string parses with
   `datetime.fromisoformat()`; it is stored as that `YYYY-MM-DD`. Both checks are
@@ -443,8 +476,13 @@ end-to-end tests green. Each layer therefore has its own pin:
   `date_from`/`date_to` of `"junk"`, `"2025-04-25junk"`, `"20250425"` each
   rejected with a message naming the key, and **not** the sanitised
   "search failed" text; `"2025-04-25T00:00:00+00:00"` accepted and normalised;
-  `{}` and omitted filters mean no filters.
-- HTTP (`/api/search` and `/api/search/stream`): unknown key → 422; bad date →
+  `{}` and omitted filters mean no filters. Mis-keyed container (L11): a call
+  passing `filter` (and one passing `Filters`) instead of `filters` to each of
+  the three search tools returns a tool error naming the key; the correctly
+  keyed call still succeeds; every existing MCP test call stays green (they pass
+  only declared names).
+- HTTP (`/api/search` and `/api/search/stream`): unknown key inside `filters` →
+  422; a body with `filter` (or `Filters`) instead of `filters` → 422; bad date →
   422; `tag_ids: []` → 422; filters without a `tag_ids` key → 200.
 - SPA (vitest, beside the existing `web/src/api/client.test.ts` and
   `web/src/api/client/searchStream.test.ts`): `toSearchRequestBody()` drops an
@@ -467,7 +505,10 @@ removed; (8) the `FilterRequest` empty-`tag_ids` validator removed (MCP and HTTP
 go red); (9) filter conversion moved back
 inside the `try`; (10) choke point **and** each site reverted together → the
 end-to-end table goes red; (11) `toSearchRequestBody()` returning
-`JSON.stringify(body)` unchanged → the SPA tests go red.
+`JSON.stringify(body)` unchanged → the SPA tests go red; (12) `extra="forbid"`
+removed from `SearchRequest` → the HTTP `filter` tests go red; (13)
+`build_mcp_app()` back to plain `FastMCP` (or the `call_tool()` override
+removed) → the MCP `filter` tests go red.
 
 ### Gates
 
@@ -531,8 +572,11 @@ the in-process result cache (L10), which may hold pre-fix answers.
   broaden.
 - **Broaden-and-retry nearly retired** (D9 consequence) — reachable only when
   the twin cap truncated; planner-guess recovery now relies on the twins.
-- **Clients sending unknown keys, non-ISO dates or an empty `tag_ids` now fail
-  loudly** — intended; the SPA is unaffected once it omits an empty `tag_ids`
+- **Clients sending unknown keys (inside `filters` or at the top level / as an
+  undeclared MCP tool argument), non-ISO dates or an empty `tag_ids` now fail
+  loudly** — intended; the published MCP `inputSchema` is unchanged (no
+  `additionalProperties: false`), so a client learns of the rule from the
+  error, not the schema; the SPA is unaffected once it omits an empty `tag_ids`
   (D11). The SPA ships in the same image (the `Dockerfile` frontend stage builds
   `web/dist`), so backend and SPA deploy together; only a browser tab still
   running the pre-deploy bundle 422s an untagged search, until it reloads.
@@ -567,6 +611,53 @@ rg -c "capped = tuple\(planned_specs\[:max_specs\]\)" src/search/planner.py  # 1
 rg -c "_BroadenOutcome|toSearchRequestBody" src web/src                      # no output, exit 1: both new names are free
 ```
 
+**L11 probes (spec gate round 3, `mcp` 1.29.1, repo venv).** HTTP:
+`SearchRequest.model_validate({"query": "x", "filter": {"tag_ids": [1]}})` →
+`filters=None` today; a subclass with `ConfigDict(extra="forbid")` → rejected,
+`extra_forbidden ('filter',)`, while `{"filters": {"tag_ids": [1]}}` still
+validates. MCP — run from the repository root, through FastMCP's own low-level
+`tools/call` handler:
+
+```sh
+.venv/bin/python - <<'EOF'
+import asyncio
+from typing import Any
+from mcp import types
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+
+class Strict(FastMCP):
+    async def call_tool(self, name, arguments):
+        tool = next((t for t in await self.list_tools() if t.name == name), None)
+        unknown = sorted(set(arguments) - set(tool.inputSchema["properties"])) if tool else []
+        if unknown:
+            raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
+        return await super().call_tool(name, arguments)
+
+async def main():
+    for cls in (FastMCP, Strict):
+        mcp = cls("probe")
+        @mcp.tool(name="semantic_search")
+        async def semantic_search(query: str, filters: dict[str, Any] | None = None) -> str:
+            return f"filters={filters}"
+        handler = mcp._mcp_server.request_handlers[types.CallToolRequest]
+        for args in ({"query": "x", "filter": {"tag_ids": [1]}}, {"query": "x", "filters": {"tag_ids": [1]}}):
+            res = (await handler(types.CallToolRequest(method="tools/call",
+                params=types.CallToolRequestParams(name="semantic_search", arguments=args)))).root
+            print(cls.__name__, list(args)[1], "isError", res.isError, res.content[0].text)
+
+asyncio.run(main())
+EOF
+# FastMCP filter isError False filters=None
+# FastMCP filters isError False filters={'tag_ids': [1]}
+# Strict filter isError True unknown argument(s): filter
+# Strict filters isError False filters={'tag_ids': [1]}
+```
+
+(The handler lookup in the probe uses `_mcp_server` only to drive the wire path;
+the implementation uses public methods only.) `rg -c "_StrictFastMCP" src
+web/src` → no output, exit 1 (the name is free).
+
 `python -c 'datetime.fromisoformat(…)'` in the repo venv: `2025-04-25` ok,
 `2025-04-25T00:00:00+00:00` ok, `2025-04-25junk` rejected, `20250425`
 **accepted**. `pydantic.VERSION` → `2.13.5`.
@@ -576,7 +667,8 @@ rg -c "_BroadenOutcome|toSearchRequestBody" src web/src                      # n
 | Round | Scope | Verdict | Outcome |
 |---|---|---|---|
 | 1 | full | NO-SHIP 2 major 7 minor | resolved in commits `46e2570` and `57e10aa` (both `docs(spec): resolve spec gate round 1`) |
-| 2 | incremental | SHIP 0 major 4 minor | minors resolved in this commit |
+| 2 | incremental | SHIP 0 major 4 minor | minors resolved in commit `51ab161` |
+| 3 | full certify | NO-SHIP 1 major 2 minor | resolved in this commit |
 
 Round 1 lesson-candidates:
 
@@ -597,3 +689,16 @@ Round 2 lesson-candidates:
   copies; in an SPA the input is live state read elsewhere as a required field.
 - A round footer that names a commit by subject must cite the sha; gate rounds
   routinely produce two commits with the same subject.
+
+Round 3 lesson-candidates:
+
+- A fail-closed boundary decision must cover the key that *carries* the
+  validated object, not only the keys inside it — probe each surface with a
+  mis-keyed container (`filter` for `filters`), including the framework's own
+  argument model (FastMCP ignores extra arguments and does not enforce its
+  published schema).
+- A trigger condition derived from a loop that dedups on a key must be stated
+  in terms of that key, never as a count of inputs — counts over-predict
+  whenever a duplicate never appends.
+- A number recorded in two sections of one document drifts; record it once
+  where it is measured and reference it.
