@@ -114,13 +114,12 @@ def test_run_search_tool_forwards_asker_to_core_call() -> None:
     """_run_search_tool passes the asker argument through to the core_call."""
     received: list = []
 
-    def _mock_call(query: str, ui_filters: object, asker: str | None) -> object:
+    def _mock_call(query: str, asker: str | None) -> object:
         received.append(asker)
         return make_search_result(answer="ok", sources=())
 
     _run_search_tool(
         query="my passport",
-        filters=None,
         core_call=_mock_call,
         error_event="test.event",
         asker="Vilmar Rosset",
@@ -133,13 +132,12 @@ def test_run_search_tool_forwards_none_asker_when_not_set() -> None:
     """_run_search_tool passes asker=None when no asker is given."""
     received: list = []
 
-    def _mock_call(query: str, ui_filters: object, asker: str | None) -> object:
+    def _mock_call(query: str, asker: str | None) -> object:
         received.append(asker)
         return make_search_result(answer="ok", sources=())
 
     _run_search_tool(
         query="passport",
-        filters=None,
         core_call=_mock_call,
         error_event="test.event",
     )

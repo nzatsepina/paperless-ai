@@ -26,9 +26,9 @@ Five tools are exposed; only ``deep_search`` is billed:
 
 The two query-shaped tools share one body helper (:func:`_run_search_tool`):
 normalise the query at the boundary (trim, reject empty/whitespace-only,
-enforce the maximum length — §10.4/§10.6), convert the optional filters, invoke
-the core method, serialise the result, and turn any failure into a sanitised
-tool error.  All five go through :func:`_run_tool`, which exempts the four
+enforce the maximum length — §10.4/§10.6), invoke the core method, serialise the
+result, and turn any failure into a sanitised tool error (the optional filters
+are validated earlier, in ``_dispatch``).  All five go through :func:`_run_tool`, which exempts the four
 zero-LLM tools from the spend quota (``bills_llm=False``).
 
 Authentication (web-redesign §5):
@@ -367,28 +367,25 @@ def _to_search_filters(raw: dict[str, Any] | None) -> SearchFilters | None:
 def _run_search_tool(
     *,
     query: str,
-    filters: SearchFilters | None,
-    core_call: Callable[[str, SearchFilters | None, str | None], SearchResult],
+    core_call: Callable[[str, str | None], SearchResult],
     error_event: str,
     asker: str | None = None,
 ) -> str:
-    """Run one search-tool body: validate, convert, invoke core, serialise.
+    """Run one search-tool body: normalise the query, invoke core, serialise.
 
     The shared body of both MCP tools.  It normalises *query* at the boundary
     via :func:`~search.wire.normalise_query` (trim, reject empty/whitespace-only,
-    enforce the maximum length — §10.4/§10.6), invokes *core_call* with the
-    already-validated *filters*, and serialises the result.  Any failure from the core
+    enforce the maximum length — §10.4/§10.6), invokes *core_call* (which closes
+    over the caller's already-validated filters) and serialises the result.  Any failure from the core
     is logged with its full traceback server-side and surfaced to the MCP
     client as a sanitised :class:`ValueError` carrying no internal detail.
 
     Args:
         query: The user's query or question.
-        filters: The caller's validated filters (converted by
-            :func:`_to_search_filters` in ``_dispatch``, before any core is
-            resolved), or ``None``.
-        core_call: The :class:`~search.core.SearchCore` method to invoke —
-            ``retrieve`` for ``semantic_search``, ``answer`` for
-            ``deep_search``.
+        core_call: Invokes the :class:`~search.core.SearchCore` method with the
+            normalised query and the asker — ``retrieve`` for
+            ``semantic_search``, ``answer`` for ``deep_search``; it closes over
+            the filters :func:`_to_search_filters` validated in ``_dispatch``.
         error_event: The structured-log event name for a failure.
         asker: Optional sanitised display name of the requesting user,
             forwarded to the core so first-person references resolve correctly.
@@ -412,7 +409,7 @@ def _run_search_tool(
     # filesystem paths or internal state) must never reach the MCP client; the
     # full traceback is logged server-side instead.
     try:
-        result = core_call(query, filters, asker)
+        result = core_call(query, asker)
         return _serialise_result(result)
     except Exception:
         log.exception(error_event)
@@ -646,8 +643,7 @@ def _register_search_tools(
             )
             return _run_search_tool(
                 query=query,
-                filters=ui_filters,
-                core_call=lambda text, ui_filters, asker_arg: core_call(
+                core_call=lambda text, asker_arg: core_call(
                     core, text, ui_filters, asker_arg
                 ),
                 error_event=error_event,
