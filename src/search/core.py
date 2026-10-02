@@ -1025,8 +1025,9 @@ class SearchCore:
         broaden.  Both passes hand *ui_filters* to the retriever as ``scope``.
 
         When every broadened search is already among pass 1's searches (always
-        the case for an unplanned, scoped search, whose recall twins already ran
-        the scope-only searches) the retry would repeat pass 1, so it is
+        the case for an unplanned, scoped search, whose pass-1 specs already are
+        the scope-only searches: each twin collapses into its original) the retry
+        would repeat pass 1, so it is
         skipped: no second retrieve, no second embedding call, and
         ``broadened=False`` with pass 1's empty chunks and signal.  Neither call
         is an LLM call.
