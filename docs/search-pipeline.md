@@ -328,8 +328,9 @@ the planner's guesses stripped but the caller's filters kept
 otherwise silently exclude the answer; the twin still retrieves it, and RRF
 rewards a document both find. A spec whose only filters are the caller's yields
 a twin identical to itself, which the retrieval-identity dedup drops — so a
-caller-scoped `semantic_search` runs no extra search. Only twins count against
-`SEARCH_PLANNER_MAX_SPECS`; originals always survive.
+caller-scoped `semantic_search` runs no extra search. Originals always survive
+and count toward `SEARCH_PLANNER_MAX_SPECS`; twins fill only the room left, so a
+plan already at the cap gets none.
 
 #### SQL date filter correctness
 
