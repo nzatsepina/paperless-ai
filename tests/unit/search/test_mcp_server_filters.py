@@ -189,6 +189,33 @@ async def test_every_tool_schema_forbids_undeclared_arguments() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool", [tool for tool, _, _ in _SEARCH_TOOLS] + ["keyword_search"]
+)
+async def test_the_filters_schema_publishes_the_strict_filter_rules(tool: str) -> None:
+    """The inner object is closed too: it names the five fields and forbids the
+    rest, rather than FastMCP's open ``additionalProperties: true`` object."""
+    async with create_connected_server_and_client_session(
+        _app(_core())._fastmcp
+    ) as client:
+        listed = await client.list_tools()
+
+    filters = next(t for t in listed.tools if t.name == tool).inputSchema["properties"][
+        "filters"
+    ]
+    (object_schema, null_schema) = filters["anyOf"]
+    assert null_schema == {"type": "null"}
+    assert object_schema["additionalProperties"] is False
+    assert set(object_schema["properties"]) == {
+        "date_from",
+        "date_to",
+        "correspondent_id",
+        "document_type_id",
+        "tag_ids",
+    }
+
+
+@pytest.mark.anyio
 async def test_filters_sent_as_a_json_string_are_parsed_then_validated() -> None:
     """Some clients stringify object arguments; FastMCP parses the string, and
     the same fail-closed rules then apply — a typo is still rejected."""

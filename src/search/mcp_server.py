@@ -420,6 +420,21 @@ def _run_search_tool(
 # ---------------------------------------------------------------------------
 
 
+def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a tool's input schema as the server actually enforces it."""
+    strict = {**schema, "additionalProperties": False}
+    properties = schema.get("properties", {})
+    if "filters" in properties:
+        strict["properties"] = {
+            **properties,
+            "filters": {
+                **properties["filters"],
+                "anyOf": [FilterRequest.model_json_schema(), {"type": "null"}],
+            },
+        }
+    return strict
+
+
 class _StrictFastMCP(FastMCP):
     """A FastMCP server that rejects tool arguments the tool does not declare.
 
@@ -429,20 +444,21 @@ class _StrictFastMCP(FastMCP):
     ``filters`` would silently get an unscoped search.  This overrides only the
     public ``call_tool`` / ``list_tools`` methods: ``call_tool`` is the one
     enforcement point; ``list_tools`` publishes ``additionalProperties: false``
-    so a schema-driven client learns the rule up front.
+    (and :class:`~search.wire.FilterRequest`'s own schema for ``filters``) so a
+    schema-driven client learns the rule up front.
     """
 
     async def list_tools(self) -> list[MCPTool]:
-        """Return every tool with ``additionalProperties: false`` on its schema.
+        """Return every tool with the strict schema the server enforces.
 
-        Each tool is a copy; the library's own schema object is not mutated.
+        ``additionalProperties: false`` at the top level, and for a tool taking
+        ``filters`` the :class:`~search.wire.FilterRequest` schema instead of
+        FastMCP's open object (unknown inner keys are rejected, so the schema
+        must not say they are allowed).  Each tool is a copy; the library's own
+        schema object is not mutated.
         """
         return [
-            tool.model_copy(
-                update={
-                    "inputSchema": {**tool.inputSchema, "additionalProperties": False}
-                }
-            )
+            tool.model_copy(update={"inputSchema": _strict_schema(tool.inputSchema)})
             for tool in await super().list_tools()
         ]
 
