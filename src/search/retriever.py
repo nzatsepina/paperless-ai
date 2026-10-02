@@ -2,7 +2,8 @@
 
 Searches each :class:`~search.models.RetrievalSpec` independently — vector
 search for a semantic spec, keyword search for a keyword spec, each with the
-spec's own resolved ``SearchFilters`` — then fuses every ranked list across all
+spec's own resolved ``SearchFilters`` intersected with the caller's scope
+(``Retriever.retrieve(specs, scope=...)``, the hard-scope choke point) — then fuses every ranked list across all
 specs with Reciprocal Rank Fusion (RRF).  Returns the top-K documents' chunks,
 capped per document and ordered by fused score.
 
