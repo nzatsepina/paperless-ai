@@ -265,8 +265,8 @@ gets its own (row 1 and "Mis-keyed container" below).
   so the tool body — and `_dispatch()` — never sees them; a check there is
   impossible. FastMCP also registers its handler with
   `call_tool(validate_input=False)` (`FastMCP._setup_handlers()`), so adding
-  `additionalProperties: false` to the published `inputSchema` would enforce
-  nothing on the server. The mechanism is therefore a module-private
+  `additionalProperties: false` in the published `inputSchema` alone would
+  enforce nothing on the server. Enforcement is therefore a module-private
   `_StrictFastMCP(FastMCP)` in `src/search/mcp_server.py` that overrides the
   public `call_tool(name, arguments)`: it looks the tool up in
   `await self.list_tools()`, and if any key of `arguments` is not in that tool's
@@ -275,6 +275,11 @@ gets its own (row 1 and "Mis-keyed container" below).
   `_StrictFastMCP` instead of `FastMCP`. It uses only public FastMCP methods and
   covers all five tools at once; the client receives `isError: true` with that
   message (probed). An unknown tool name is left to FastMCP's own error.
+  `_StrictFastMCP` also overrides the public `list_tools()` to return each tool
+  with `additionalProperties: false` set on its `inputSchema` (on a copy; the
+  `properties` lookup above is unaffected), so schema-driven clients — LLMs
+  generate arguments from the schema — learn the rule up front instead of from
+  the error; the server-side check in `call_tool()` remains the only enforcement.
   Rejected: setting `extra="forbid"` on each tool's generated argument model
   after registration — also probed and works, but reaches through the private
   `FastMCP._tool_manager` and mutates a library-generated class.
@@ -480,7 +485,10 @@ end-to-end tests green. Each layer therefore has its own pin:
   passing `filter` (and one passing `Filters`) instead of `filters` to each of
   the three search tools returns a tool error naming the key; the correctly
   keyed call still succeeds; every existing MCP test call stays green (they pass
-  only declared names).
+  only declared names). Published schema: `tools/list` returns
+  `additionalProperties: false` on the `inputSchema` of all five tools
+  (`semantic_search`, `deep_search`, `keyword_search`, `fetch_documents`,
+  `list_filters`).
 - HTTP (`/api/search` and `/api/search/stream`): unknown key inside `filters` →
   422; a body with `filter` (or `Filters`) instead of `filters` → 422; bad date →
   422; `tag_ids: []` → 422; filters without a `tag_ids` key → 200.
@@ -574,9 +582,9 @@ the in-process result cache (L10), which may hold pre-fix answers.
   the twin cap truncated; planner-guess recovery now relies on the twins.
 - **Clients sending unknown keys (inside `filters` or at the top level / as an
   undeclared MCP tool argument), non-ISO dates or an empty `tag_ids` now fail
-  loudly** — intended; the published MCP `inputSchema` is unchanged (no
-  `additionalProperties: false`), so a client learns of the rule from the
-  error, not the schema; the SPA is unaffected once it omits an empty `tag_ids`
+  loudly** — intended; the published MCP `inputSchema` of all five tools gains
+  `additionalProperties: false` (via the `list_tools()` override), so a
+  schema-driven client is told the rule up front as well as by the error; the SPA is unaffected once it omits an empty `tag_ids`
   (D11). The SPA ships in the same image (the `Dockerfile` frontend stage builds
   `web/dist`), so backend and SPA deploy together; only a browser tab still
   running the pre-deploy bundle 422s an untagged search, until it reloads.
@@ -668,7 +676,8 @@ web/src` → no output, exit 1 (the name is free).
 |---|---|---|---|
 | 1 | full | NO-SHIP 2 major 7 minor | resolved in commits `46e2570` and `57e10aa` (both `docs(spec): resolve spec gate round 1`) |
 | 2 | incremental | SHIP 0 major 4 minor | minors resolved in commit `51ab161` |
-| 3 | full certify | NO-SHIP 1 major 2 minor | resolved in this commit |
+| 3 | full certify | NO-SHIP 1 major 2 minor | resolved in commit `fc5f8cd` |
+| 4 | incremental | SHIP 0 major 1 minor | minor resolved in this commit |
 
 Round 1 lesson-candidates:
 
