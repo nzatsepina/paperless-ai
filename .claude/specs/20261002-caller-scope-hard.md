@@ -296,8 +296,10 @@ gets its own (row 1 and "Mis-keyed container" below).
 - **Empty tag list (both surfaces, D11)** is a `model_validator(mode="after")` on
   `FilterRequest`: `"tag_ids" in self.model_fields_set and not self.tag_ids`
   raises. `model_fields_set` is what tells an explicit `[]` from an omitted key
-  (`tag_ids` keeps its `default_factory=list`); `src/search/wire/api_keys.py`
-  already uses `model_fields_set` the same way. `filters` omitted, `None` or `{}`
+  (`tag_ids` keeps its `default_factory=list`); `src/search/api_key_routes.py`
+  (`_update_api_key`, `sent = body.model_fields_set`) already reads
+  `model_fields_set` to tell an explicit `null` from an absent key; here the same
+  test runs inside the validator (probed on pydantic 2.13.5). `filters` omitted, `None` or `{}`
   still means "no filters" — an empty object names no constraint, so nothing is
   dropped.
 - **SPA request body (D11).** `paramsToFilters()`
@@ -332,7 +334,8 @@ gets its own (row 1 and "Mis-keyed container" below).
   `_run_search_tool()` then receives `SearchFilters | None`. `_run_tool()` has
   no catch-all of its own (read), so the error reaches the client as raised.
   Pydantic 2's `ValidationError` subclasses `ValueError`; it is caught as `exc`
-  and re-raised with `raise ValueError(<field name + Pydantic's message>) from exc`
+  in `_to_search_filters()` — the one converter all three tools call, so every
+  tool, `keyword_search` included, raises the same message — and re-raised with `raise ValueError(<field name + Pydantic's message>) from exc`
   (CODE_GUIDELINES §6.3 — the message carries no secret or internal state, so the
   traceback is kept; `from None` is reserved for the sanitised path). HTTP gets
   FastAPI's standard 422.
@@ -516,13 +519,15 @@ end-to-end table goes red; (11) `toSearchRequestBody()` returning
 `JSON.stringify(body)` unchanged → the SPA tests go red; (12) `extra="forbid"`
 removed from `SearchRequest` → the HTTP `filter` tests go red; (13)
 `build_mcp_app()` back to plain `FastMCP` (or the `call_tool()` override
-removed) → the MCP `filter` tests go red.
+removed) → the MCP `filter` tests go red; (14) the `list_tools()` override
+removed → the "Published schema" test goes red.
 
 ### Gates
 
-`.claude/GATES.md` — `python-tests`, `python-types`, `python-lint`,
-`python-security` must be green, and — since D11 changes `web/src/api/client/`
-— the five `web-*` gates too.
+`.claude/GATES.md` — every gate in it (ten today) must be green. The four
+`python-*` code gates (`python-tests`, `python-types`, `python-lint`,
+`python-security`) and, since D11 changes `web/src/api/client/`, the five `web-*`
+gates are the ones this change can turn red; `python-dep-audit` is run too.
 
 ## Docs (D8)
 
@@ -590,8 +595,15 @@ the in-process result cache (L10), which may hold pre-fix answers.
   running the pre-deploy bundle 422s an untagged search, until it reloads.
 - **Upstream merge conflicts** in touched files; the choke point stops a merge
   silently reopening the leak.
-- **Over-ceiling files.** `retriever.py` (945 lines) and `core.py` (2133) already
-  exceed the 500-line ceiling; touched functions stay within §3.1.
+- **Over-ceiling files (§3.1 decision).** `retriever.py` (945 lines) and `core.py`
+  (2133) already carry a file-level `# rationale:` header — the §3.1 carve-out,
+  not a divergence. Three further touched files exceed the 500-line ceiling with
+  no such header: `src/search/mcp_server.py` (813), `src/store/reader/_lookups.py`
+  (639) and `src/search/models.py` (507). Decision: no split in this change — a
+  split would move unrelated code and widen the diff past the leak fix. The
+  implementation adds the one-line `# rationale:` file header §3.1 requires to
+  each (stating why the file stays whole in this change, not "it would be
+  awkward"), and touched functions stay within §3.1.
 
 ## Verification evidence (re-run at spec gate round 1, on `994f3b3`)
 
@@ -613,7 +625,7 @@ rg -c "retriever\.retrieve\(" tests                                          # m
 rg -n "broaden|twin|_EMPTY_FILTERS|ui_filters=None" tests | wc -l            # 99
 rg -c "\bIndexedDocument\(|\bDocumentSummary\(|\bSourceDocument\(" tests src  # 22 lines across 12 files
 rg -c "JSON.stringify\(body\)" web/src/api/client/search.ts web/src/api/client/searchStream.ts  # 1 and 1 (D11's two senders)
-rg -c "model_fields_set" src/search/wire/api_keys.py                         # 2 (precedent for the D11 validator)
+rg -c "model_fields_set" src/search/api_key_routes.py                        # 2 (precedent for the D11 validator: `_update_api_key`)
 rg -c "require_api_scope" src/search/api.py                                  # 3 (search routes are API-key callable)
 rg -c "capped = tuple\(planned_specs\[:max_specs\]\)" src/search/planner.py  # 1 (planner cap, D9)
 rg -c "_BroadenOutcome|toSearchRequestBody" src web/src                      # no output, exit 1: both new names are free
@@ -662,6 +674,21 @@ EOF
 # Strict filters isError False filters={'tag_ids': [1]}
 ```
 
+**`list_tools()` probe (spec gate round 5, `mcp` 1.29.1, repo venv).** A
+`FastMCP` subclass overriding `list_tools()` (a `model_copy` of each tool with
+`additionalProperties: false` on its `inputSchema`) and `call_tool()` as above;
+FastMCP registers the bound `self.list_tools`, so the subclass method is what
+`tools/list` runs. Probe script output, through the low-level handlers:
+
+```
+tools/list semantic_search additionalProperties False
+library info.parameters additionalProperties None
+call filter isError True unknown argument(s): filter
+```
+
+`tools/list` publishes `additionalProperties: false`; the library's own schema is
+untouched (a copy, not a mutation); the `call_tool()` override still rejects.
+
 (The handler lookup in the probe uses `_mcp_server` only to drive the wire path;
 the implementation uses public methods only.) `rg -c "_StrictFastMCP" src
 web/src` → no output, exit 1 (the name is free).
@@ -677,7 +704,8 @@ web/src` → no output, exit 1 (the name is free).
 | 1 | full | NO-SHIP 2 major 7 minor | resolved in commits `46e2570` and `57e10aa` (both `docs(spec): resolve spec gate round 1`) |
 | 2 | incremental | SHIP 0 major 4 minor | minors resolved in commit `51ab161` |
 | 3 | full certify | NO-SHIP 1 major 2 minor | resolved in commit `fc5f8cd` |
-| 4 | incremental | SHIP 0 major 1 minor | minor resolved in this commit |
+| 4 | incremental | SHIP 0 major 1 minor | minor resolved in commit `b2e060d` |
+| 5 | full certify | SHIP 0 major 5 minor | minors resolved in this commit |
 
 Round 1 lesson-candidates:
 
@@ -711,3 +739,16 @@ Round 3 lesson-candidates:
   whenever a duplicate never appends.
 - A number recorded in two sections of one document drifts; record it once
   where it is measured and reference it.
+
+Round 5 lesson-candidates:
+
+- A spec that invokes "the divergence is fixed in the PR that next touches it"
+  for one rule must sweep every touched file for the other rules' divergences too
+  (here §3.1 on three files) — selective invocation hands the decision to the
+  review-team gate.
+- A precedent citation ("file X already does Y the same way") is an anchor like
+  any other: grep the mechanism, not the word — a docstring in X that describes Y
+  is not X doing Y.
+- A mechanism added in a gate-round fix lands with its own probe line and
+  mutation entry in the same commit; the mutation list drifts behind the design
+  precisely when fixes add mechanisms.
