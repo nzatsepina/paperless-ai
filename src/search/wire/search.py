@@ -67,8 +67,8 @@ class FilterRequest(BaseModel):
     an unknown key (``tag_id`` for ``tag_ids``), a ``date_from`` / ``date_to``
     that is not an ISO date, an explicitly empty ``tag_ids`` and an id that is
     not a positive integer are all rejected.  This one model is the parse for
-    both the HTTP and the MCP boundary, so the rules hold identically on both.  An omitted field means
-    "no constraint"; multiple ``tag_ids`` are ANDed (every id required).
+    both the HTTP and the MCP boundary, so the rules hold identically on both.
+    An omitted field means "no constraint"; multiple ``tag_ids`` are ANDed (every id required).
     """
 
     model_config = ConfigDict(extra="forbid")

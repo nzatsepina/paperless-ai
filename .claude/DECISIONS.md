@@ -383,7 +383,10 @@ skipped, which nearly retires broaden (it fires only when `SEARCH_PLANNER_MAX_SP
 and removes its incidental second embedding call; retrying a transient embedding failure belongs
 to the client's own retry. At plan time the date rule was tightened beyond the spec's two checks:
 the ISO week form (`2025-W17-5`) passes both, so the parsed date must also equal the
-ten-character prefix. Rejected: a per-site fix without a choke point; keeping the old semantics
+ten-character prefix. Round 1 of the review gate extended D3 to ids: a correspondent, document
+type or tag id must be a strict positive integer within SQLite's range, because `true` coerced to
+`1` and selected another tenant's tag; a numeric-string id that used to resolve is now rejected.
+Rejected: a per-site fix without a choke point; keeping the old semantics
 for the web UI; an MCP-only empty-`tag_ids` rule; making `tag_ids` optional in the SPA's UI state.
 **Spec:** `.claude/specs/20261002-caller-scope-hard.md`
 **Affects:** `src/search/retriever.py`, `src/search/core.py`, `src/search/wire/search.py`, `src/search/mcp_server.py`, `src/store/models.py`, `src/store/reader/_lookups.py`, `src/store/reader/_browse.py`, `src/search/models.py`, `src/search/sources.py`, `web/src/api/client/search.ts`, `web/src/api/client/searchStream.ts`, `docs/search-pipeline.md`

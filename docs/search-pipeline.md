@@ -305,9 +305,12 @@ is no any-of form.
 
 A malformed caller filter is rejected at the boundary, never ignored: an unknown
 key (`tag_id` for `tag_ids`), a mis-keyed container (`filter` for `filters`), a
-`date_from` / `date_to` that is not an ISO date, or an explicitly empty
-`tag_ids` is a 422 over HTTP and a tool error over MCP. An omitted `tag_ids`
-still means "no tag constraint".
+`date_from` / `date_to` that is not an ISO date, an explicitly empty
+`tag_ids`, or an id (`correspondent_id`, `document_type_id`, a `tag_ids` element)
+that is not a positive JSON integer (`true`, `"5"`, `5.0`, `0`, a negative or
+beyond SQLite's integer range) is a 422 over HTTP and a tool error over MCP. A
+numeric-string id that used to be coerced is therefore rejected too. An omitted
+`tag_ids` still means "no tag constraint".
 
 #### Deterministic date safety net
 

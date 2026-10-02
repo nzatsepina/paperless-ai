@@ -881,7 +881,9 @@ def build_mcp_app(
             "Search filters are a hard scope: every returned document matches "
             "every filter, they are never relaxed, and multiple tag_ids are "
             "ANDed. An unknown filter key, a non-ISO date, an empty tag_ids or an "
-            "id that is not a positive integer is rejected with an error.\n\n"
+            'id that is not a positive integer (a string id such as "5" '
+            "included) or a mis-keyed 'filters' argument is rejected with an "
+            "error.\n\n"
             "Default to semantic_search. Discover filters with list_filters. "
             "Read whole documents with fetch_documents. Reach for deep_search "
             "only with a concrete reason the free tools cannot serve."
