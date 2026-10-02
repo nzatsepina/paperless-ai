@@ -219,6 +219,20 @@ class _RetrievalPhaseResult:
     documents_by_id: dict[int, IndexedDocument]
 
 
+@dataclass(frozen=True, slots=True)
+class _BroadenOutcome:
+    """The output of :meth:`SearchCore._retrieve_with_broaden`.
+
+    *signal* is from whichever pass produced *chunks* (pass 1 when the broaden
+    was skipped); *broadened* is True iff a second, different retrieval ran.
+    A frozen carrier instead of a positional 3-tuple (CODE_GUIDELINES §5.8).
+    """
+
+    chunks: list[RetrievedChunk]
+    signal: RetrievalSignal
+    broadened: bool
+
+
 class SearchCore:
     """Orchestrates the bounded agentic search pipeline (spec §6.3).
 
@@ -306,8 +320,9 @@ class SearchCore:
 
         Args:
             query: The raw user search query.
-            ui_filters: Explicit user-set filters; when provided they are
-                authoritative and bypass free-text filter resolution.
+            ui_filters: The caller's filters — a hard scope: every returned
+                document satisfies every one of them, on every pass (planner
+                guesses are intersected with them, never replace them).
             asker: Optional sanitised display name of the requesting user.
                 Threaded to the planner and synthesiser so first-person
                 references resolve to the right person, and included in the
@@ -626,7 +641,8 @@ class SearchCore:
 
         Args:
             query: The raw user search query.
-            ui_filters: Explicit user-set filters; authoritative when set.
+            ui_filters: The caller's filters — a hard scope every returned
+                document satisfies; never relaxed.
             on_event: Optional per-phase event callback (resolve + retrieve
                 only). ``None`` keeps behaviour unchanged; the trace/cost are
                 assembled onto the result either way.
@@ -852,7 +868,7 @@ class SearchCore:
         planner saw them), emits the non-LLM ``resolve`` phase (the per-spec
         resolved ids/dates and the guesses that did not resolve), then the
         ``retrieve`` phase with the chunk/document counts and whether the
-        broadened (filter-dropped) second pass ran.  Neither phase is an LLM
+        broadened (planner-guess-dropped) second pass ran.  Neither phase is an LLM
         call, so neither carries tokens.  The same *facets* are reused across
         both the first and the broadened retrieval pass.
 
@@ -882,9 +898,8 @@ class SearchCore:
 
         tele.start("retrieve", "Retrieving documents")
         started = time.monotonic()
-        chunks, signal, broadened = self._retrieve_with_broaden(
-            plan, specs, facets, today, ui_filters
-        )
+        outcome = self._retrieve_with_broaden(plan, specs, facets, today, ui_filters)
+        chunks = outcome.chunks
         doc_ids = {c.document_id for c in chunks}
         documents_by_id = {
             doc.id: doc for doc in self._store_reader.get_documents(doc_ids)
@@ -895,7 +910,7 @@ class SearchCore:
             {
                 "chunk_count": len(chunks),
                 "doc_count": len(doc_ids),
-                "broadened": broadened,
+                "broadened": outcome.broadened,
                 "chunks": _trace_chunks(chunks, documents_by_id),
             },
             usage_sink=[],
@@ -903,7 +918,7 @@ class SearchCore:
         )
         return _RetrievalPhaseResult(
             chunks=chunks,
-            signal=signal,
+            signal=outcome.signal,
             specs=specs,
             facets=facets,
             documents_by_id=documents_by_id,
@@ -996,37 +1011,44 @@ class SearchCore:
         facets: FacetSet,
         today: date,
         ui_filters: SearchFilters | None,
-    ) -> tuple[list[RetrievedChunk], RetrievalSignal, bool]:
+    ) -> _BroadenOutcome:
         """Retrieve for the resolved *specs*; broaden and retry once if empty.
 
         Runs hybrid retrieval over the already-resolved *specs* (the caller
-        resolved them with any UI filters already applied).  An empty result is
-        retried once with every spec's filters dropped (spec §6.3) — a
-        mis-resolved or hallucinated filter is the most common cause of an
-        otherwise-answerable query returning nothing.  The broadened pass
+        resolved them with *ui_filters* already applied).  An empty result is
+        retried once with every *planner* guess dropped (spec §6.3) — a
+        mis-resolved or hallucinated planner filter is the most common cause of
+        an otherwise-answerable query returning nothing.  The broadened pass
         re-resolves :func:`~search.refinement.broaden_plan`'s output against the
-        same *facets* (no second ``list_facets`` round-trip) with no UI filters,
-        so a UI-set filter the user explicitly chose does not survive the
-        broaden.  Neither call is an LLM call.
+        same *facets* (no second ``list_facets`` round-trip) and the same
+        *ui_filters*: the caller's filters are a hard scope and survive the
+        broaden.  Both passes hand *ui_filters* to the retriever as ``scope``.
+
+        When every broadened search is already among pass 1's searches (always
+        the case for an unplanned, scoped search, whose recall twins already ran
+        the scope-only searches) the retry would repeat pass 1, so it is
+        skipped: no second retrieve, no second embedding call, and
+        ``broadened=False`` with pass 1's empty chunks and signal.  Neither call
+        is an LLM call.
 
         Returns:
-            A 3-tuple ``(chunks, signal, broadened)`` where *signal* is from
-            whichever retrieval pass found chunks (or the broadened pass when
-            the first was empty) and *broadened* is True iff the second
-            (filter-dropped) pass ran. The signal is forwarded to Layer 2 and
-            *broadened* feeds the retrieve-phase detail.
+            A :class:`_BroadenOutcome`; *broadened* feeds the retrieve-phase
+            detail and *signal* is forwarded to Layer 2.
         """
         chunks, signal = self._retriever.retrieve(specs, scope=ui_filters)
         if chunks:
-            return chunks, signal, False
+            return _BroadenOutcome(chunks=chunks, signal=signal, broadened=False)
 
-        # Empty retrieval — drop every spec's filters and try once more.
         broadened_specs = resolve_specs(
-            broaden_plan(plan), facets, ui_filters=None, today=today
+            broaden_plan(plan), facets, ui_filters=ui_filters, today=today
         )
+        pass_one_keys = {_spec_search_key(spec) for spec in specs}
+        if all(_spec_search_key(spec) in pass_one_keys for spec in broadened_specs):
+            return _BroadenOutcome(chunks=[], signal=signal, broadened=False)
+
         log.info("search.retrieval_broadened")
         chunks, signal = self._retriever.retrieve(broadened_specs, scope=ui_filters)
-        return chunks, signal, True
+        return _BroadenOutcome(chunks=chunks, signal=signal, broadened=True)
 
     def _judge_candidates(
         self,
