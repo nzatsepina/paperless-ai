@@ -18,9 +18,7 @@ each redeclare.
 
 # rationale: this file exceeds the §3.1 500-line guideline. It is the package's
 # one search-shapes factory module, and the shapes' builders call each other;
-# the caller-scope change only adds a tag-id parameter, and a split there
-# would move unrelated builders and widen a leak-fix diff (spec
-# 20261002-caller-scope-hard, Risks).
+# a split would move builders away from the ones they call.
 """
 
 from __future__ import annotations

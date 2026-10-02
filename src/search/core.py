@@ -54,8 +54,7 @@ Forbidden: no FastAPI, no MCP SDK, no sqlite3, no direct LLM/HTTP calls.
 # cohesion benefit. The Wave 4 simplification audit accepted this length.
 # The imported names exceed the §3.1 30-name cap for the same reason: the one
 # orchestrator drives every pipeline stage and names each stage's I/O shapes,
-# so only a split would lower the count, and the caller-scope change adds no
-# import (spec 20261002-caller-scope-hard, Risks).
+# so only a split would lower the count.
 """
 
 from __future__ import annotations
@@ -1244,9 +1243,7 @@ class SearchCore:
     # rationale: over the §3.1 60-line ceiling. One refinement pass is one
     # ordered sequence — re-plan, the clarify and no-op exits, retrieve, merge,
     # re-judge, re-synthesise — sharing the LLM budget, the telemetry and one
-    # returned triple. This change only passes the caller scope to its
-    # retrieve; a split would widen a leak-fix diff (spec
-    # 20261002-caller-scope-hard, Risks).
+    # returned triple; a split would scatter that shared state.
     def _refine(
         self,
         query: str,

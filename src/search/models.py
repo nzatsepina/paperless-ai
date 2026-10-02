@@ -11,8 +11,7 @@ api.py (CODE_GUIDELINES.md §5.6).
 # pipeline's frozen I/O dataclasses (one derived property, no other behaviour);
 # every stage imports its shapes from this one module and the shapes reference
 # each other, so splitting it would add re-export edges (forbidden by the
-# no-barrel rule). The caller-scope change only adds a field (spec
-# 20261002-caller-scope-hard, Risks).
+# no-barrel rule).
 """
 
 from __future__ import annotations

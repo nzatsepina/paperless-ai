@@ -52,14 +52,10 @@ Forbidden: FastAPI (api.py), direct LLM calls. ``fetch_documents`` does proxy
 # boundary: the auth middleware, the strict FastMCP subclass, and the five tool
 # closures share the per-request core resolution, the spend-quota scaffold
 # (``_run_tool``) and the filter parse, and the closures must be registered on
-# one FastMCP instance. The caller-scope change that last touched it is a leak
-# fix; splitting the module there would move unrelated code and widen that
-# diff past the fix (spec 20261002-caller-scope-hard, Risks). The imported
-# names exceed the §3.1 30-name cap too: the module already imported 40, since
+# one FastMCP instance. The imported names exceed the §3.1 30-name cap too:
 # this one boundary wires session and API-key auth, the spend quota, the core,
-# the store's filter shape, the MCP SDK and the ASGI transport; the caller-scope
-# change adds five (Sequence, ToolError, ValidationError, ContentBlock, MCPTool)
-# for the strict server and the filter error. Only that split would lower it.
+# the store's filter shape, the MCP SDK and the ASGI transport. Only a split
+# would lower it.
 """
 
 from __future__ import annotations
@@ -514,12 +510,9 @@ class _McpApp:
         await self._asgi_app(scope, receive, send)
 
 
-# rationale: over the §3.1 60-line ceiling before this change — the five MCP
-# tools are closures that must register on one FastMCP instance and share the
-# captured `resolve_core`, `app_db_path`, `search_semaphore` and
-# `paperless_factory`. The caller-scope change shortens it (its three
-# filter-taking descriptions move to module constants); a split would widen a
-# leak-fix diff (spec 20261002-caller-scope-hard, Risks).
+# rationale: over the §3.1 60-line ceiling — the five MCP tools are closures
+# that must register on one FastMCP instance and share the captured
+# `resolve_core`, `app_db_path`, `search_semaphore` and `paperless_factory`.
 def _register_search_tools(
     mcp: FastMCP,
     resolve_core: Callable[[str], SearchCore],
