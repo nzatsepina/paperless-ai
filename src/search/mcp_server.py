@@ -331,8 +331,8 @@ def _to_search_filters(raw: dict[str, Any] | None) -> SearchFilters | None:
     documented pattern (CODE_GUIDELINES §5.6, §10.4) — then delegates to the
     one shared :func:`~search.wire.to_search_filters` converter.  The filters
     are a hard scope, so a malformed one (unknown key, non-ISO date, empty
-    ``tag_ids``) is rejected, never ignored; ``None`` or an empty dict means
-    no filters.  The one converter all three search tools call, so every tool
+    ``tag_ids``, an id that is not a positive integer) is rejected, never
+    ignored; ``None`` or an empty dict means no filters.  The one converter all three search tools call, so every tool
     raises the same message.
 
     Args:
@@ -880,8 +880,8 @@ def build_mcp_app(
             "asked for the archive to answer itself.\n\n"
             "Search filters are a hard scope: every returned document matches "
             "every filter, they are never relaxed, and multiple tag_ids are "
-            "ANDed. An unknown filter key, a non-ISO date or an empty tag_ids "
-            "is rejected with an error.\n\n"
+            "ANDed. An unknown filter key, a non-ISO date, an empty tag_ids or an "
+            "id that is not a positive integer is rejected with an error.\n\n"
             "Default to semantic_search. Discover filters with list_filters. "
             "Read whole documents with fetch_documents. Reach for deep_search "
             "only with a concrete reason the free tools cannot serve."
