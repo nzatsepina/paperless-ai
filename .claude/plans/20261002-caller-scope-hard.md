@@ -24,6 +24,7 @@
 - **§3.1:** add the one-line-or-more `# rationale:` header to `src/search/mcp_server.py`, `src/store/reader/_lookups.py`, `src/search/models.py` (over 500 lines, no header today). No splits.
 - **Tests encoding the old drop are re-targeted or inverted, never deleted** (GATES: a red gate is never greened by deletion).
 - **Public repository:** no host, container, domain, client, downstream project, real taxonomy id or person anywhere — every id in code, tests and prose is a placeholder (`101`, `202`, `"tenant-a"`).
+- **Every command block runs in the venv, in the worktree that owns the task.** Shell state does not persist between an agent's tool calls, so each block starts with `source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"` (run from that worktree's root). A tool resolved from anywhere else — above all `pip-audit` in G1, which would audit the wrong environment and pass silently — invalidates the result. `web/node_modules` is per checkout: every worktree that runs `npm`/`npx` installs it first (`cd web && npm ci`).
 - **British English** in prose, comments, docstrings and commit messages; identifiers follow the existing code.
 - **Commits:** Conventional Commits, ambient git identity (no `-c user.*`, no `GIT_AUTHOR_*`), no AI attribution. One commit per task unless a task says otherwise.
 - **Plan code was executed, not just written:** every Python/TS block below was applied to a copy of `ecaeb28`, track by track, and `ruff check`, `ruff format --check`, `mypy src`, the full pytest suite, `npm run typecheck`, `npm run lint` and `npm run test:coverage` were green; each test block was red before its code block. The one formatting fix-up is named where it occurs (Task A1).
@@ -3148,11 +3149,12 @@ with:
 No stage imports Pydantic; validation happens only at the HTTP boundary in
 api.py (CODE_GUIDELINES.md §5.6).
 
-# rationale: this file exceeds the §3.1 500-line guideline. It is a declarative
-# catalogue of the pipeline's frozen I/O shapes — every stage imports its
-# shapes from this one module, and the shapes reference each other; splitting
-# it would add re-export edges (forbidden by the no-barrel rule). The
-# caller-scope change only adds a field (spec 20261002-caller-scope-hard, Risks).
+# rationale: this file exceeds the §3.1 500-line guideline. It holds only the
+# pipeline's frozen I/O dataclasses (one derived property, no other behaviour);
+# every stage imports its shapes from this one module and the shapes reference
+# each other, so splitting it would add re-export edges (forbidden by the
+# no-barrel rule). The caller-scope change only adds a field (spec
+# 20261002-caller-scope-hard, Risks).
 """
 ```
 
@@ -3260,6 +3262,12 @@ git commit -m "feat(search): expose each source's tag ids so a caller can verify
 - Consumes: nothing from other tracks. `paramsToFilters()` (`web/src/lib/parseSearchParams.ts`) and `FilterRequest.tag_ids` in `web/src/api/types/search.ts` stay **unchanged**: that `FilterRequest` is UI state read as a required array by `FilterControls`, `ActiveFiltersStrip` and `features/search/filters.ts`.
 
 Built on a shallow copy — `body` and `body.filters` are live UI state and are never mutated (the `delete` runs on a fresh object). `filters: null` / absent passes through, so the existing `filters: null` assertion in `searchStream.test.ts` stays green unmodified. `searchStream.ts` → `search.ts` is an `api` → `api` import, which `web/eslint.config.js` allows (`{ from: 'api', allow: ['api', 'lib'] }`).
+
+- [ ] **Step 0: Install this worktree's SPA dependencies** (each worktree has its own `web/node_modules`; Task 0's install does not reach the track worktree)
+
+```bash
+cd web && npm ci && cd ..
+```
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3871,7 +3879,7 @@ For each row: apply the change, run the command, read the FAILED lines, `git che
 | 13 | `src/search/mcp_server.py` `build_mcp_app()`: `mcp = _StrictFastMCP(` → `mcp = FastMCP(` | `python -m pytest tests/unit/search/test_mcp_server_filters.py` | every `test_a_mis_keyed_filters_container_is_rejected[*]`; `test_the_zero_llm_tools_reject_undeclared_arguments_too[*]`; `test_every_tool_schema_forbids_undeclared_arguments` |
 | 14 | `src/search/mcp_server.py` `_StrictFastMCP`: rename `async def list_tools` → `async def _unused_list_tools` (removes the override; `call_tool` still enforces) | `python -m pytest tests/unit/search/test_mcp_server_filters.py` | `test_every_tool_schema_forbids_undeclared_arguments` only |
 
-Each mutation in the table also turns its own row's task red at the time the task was written (the dry run applied all fourteen to the finished tree; every one went red as listed). The report back carries, per row: the exact edit made, the FAILED test ids observed, and confirmation the tree was restored clean. Only then may any document say the mutation is pinned.
+The "expected red" column is a **prediction** from the plan author's dry run on a scratch copy; it is not a record and claims nothing. The record is this task's own run: per row, the exact edit made, the FAILED test ids observed, and confirmation the tree was restored clean. Only after that run may any document say a mutation is pinned.
 
 ---
 
