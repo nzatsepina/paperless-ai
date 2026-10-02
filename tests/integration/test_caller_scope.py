@@ -19,9 +19,10 @@ from unittest.mock import MagicMock
 
 from common.embeddings import EmbeddingError
 from search.core import SearchCore
-from store.models import SearchFilters, TaxonomyEntry
+from store.models import TaxonomyEntry
 from store.reader import StoreReader
 from store.writer import StoreWriter
+from tests.helpers.factories import make_search_filters
 from tests.helpers.llm import (
     ScriptedLLMClient,
     _make_spec,
@@ -46,16 +47,6 @@ _NAME_A = "tenant-a"
 _NAME_B = "tenant-b"
 _A_IDS = (1, 2)
 _B_IDS = (3, 4)
-
-
-def _scope(tag_id: int) -> SearchFilters:
-    return SearchFilters(
-        date_from=None,
-        date_to=None,
-        correspondent_id=None,
-        document_type_id=None,
-        tag_ids=(tag_id,),
-    )
 
 
 def _seed_two_tenants(tmp_path: Path) -> MagicMock:
@@ -128,7 +119,7 @@ def test_scoped_semantic_search_returns_only_the_scope(tmp_path: Path) -> None:
     reader = StoreReader(settings)
     try:
         result = _core(settings, reader).retrieve(
-            "boiler warranty", ui_filters=_scope(_TAG_A)
+            "boiler warranty", ui_filters=make_search_filters(tag_ids=(_TAG_A,))
         )
         ids = [source.document_id for source in result.sources]
         assert ids
@@ -143,7 +134,7 @@ def test_scoped_dated_semantic_search_returns_only_the_scope(tmp_path: Path) -> 
     reader = StoreReader(settings)
     try:
         result = _core(settings, reader).retrieve(
-            "boiler warranty in 2024", ui_filters=_scope(_TAG_A)
+            "boiler warranty in 2024", ui_filters=make_search_filters(tag_ids=(_TAG_A,))
         )
         ids = [source.document_id for source in result.sources]
         assert ids
@@ -158,7 +149,7 @@ def test_scope_matching_no_document_returns_nothing(tmp_path: Path) -> None:
     reader = StoreReader(settings)
     try:
         result = _core(settings, reader).retrieve(
-            "boiler warranty", ui_filters=_scope(_TAG_NOBODY)
+            "boiler warranty", ui_filters=make_search_filters(tag_ids=(_TAG_NOBODY,))
         )
         assert result.sources == ()
     finally:
@@ -175,7 +166,7 @@ def test_embedding_outage_with_no_scoped_keyword_hit_returns_nothing(
     embedding_client.embed.side_effect = EmbeddingError("embedding endpoint down")
     try:
         result = _core(settings, reader, embedding_client=embedding_client).retrieve(
-            "gasket", ui_filters=_scope(_TAG_A)
+            "gasket", ui_filters=make_search_filters(tag_ids=(_TAG_A,))
         )
         assert result.sources == ()
     finally:
@@ -205,7 +196,8 @@ def test_scoped_deep_search_refinement_returns_only_the_scope(tmp_path: Path) ->
     )
     try:
         result = _core(settings, reader, llm_client=llm_client).answer(
-            "when does my boiler warranty end?", ui_filters=_scope(_TAG_A)
+            "when does my boiler warranty end?",
+            ui_filters=make_search_filters(tag_ids=(_TAG_A,)),
         )
         assert llm_client.replan_calls == 1
         ids = [source.document_id for source in result.sources]
@@ -222,7 +214,9 @@ def test_scoped_keyword_search_returns_only_the_scope(tmp_path: Path) -> None:
     try:
         core = _core(settings, reader)
         for query in ("warranty", None):
-            page = core.keyword_search(query, _scope(_TAG_A), 20, 0)
+            page = core.keyword_search(
+                query, make_search_filters(tag_ids=(_TAG_A,)), 20, 0
+            )
             ids = [hit.document.id for hit in page.hits]
             assert ids
             _assert_all_carry(reader, ids, _NAME_A)
@@ -234,13 +228,7 @@ def test_multiple_scope_tags_are_anded(tmp_path: Path) -> None:
     """D6: two scope tags require both; no seeded document carries both."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
-    both = SearchFilters(
-        date_from=None,
-        date_to=None,
-        correspondent_id=None,
-        document_type_id=None,
-        tag_ids=(_TAG_A, _TAG_B),
-    )
+    both = make_search_filters(tag_ids=(_TAG_A, _TAG_B))
     try:
         result = _core(settings, reader).retrieve("boiler warranty", ui_filters=both)
         assert result.sources == ()
