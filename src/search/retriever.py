@@ -419,7 +419,7 @@ def resolve_specs(
             )
 
     if max_specs is not None:
-        resolved = _append_unfiltered_twins(resolved, max_specs, ui_filters)
+        resolved = _append_recall_twins(resolved, max_specs, ui_filters)
 
     return tuple(resolved)
 
@@ -457,7 +457,7 @@ def _retrieval_key(spec: RetrievalSpec) -> tuple[object, ...]:
     return (spec.mode, spec.semantic, spec.keywords, spec.filters)
 
 
-def _append_unfiltered_twins(
+def _append_recall_twins(
     resolved: list[RetrievalSpec],
     max_specs: int,
     ui_filters: SearchFilters | None,
