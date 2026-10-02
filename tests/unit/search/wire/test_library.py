@@ -45,6 +45,7 @@ class TestLibraryWireModels:
                     correspondent="British Gas",
                     document_type="Invoice",
                     tags=("utilities",),
+                    tag_ids=(),
                     created="2024-03-01T00:00:00+00:00",
                     page_count=2,
                 ),
@@ -79,6 +80,7 @@ class TestLibraryWireModels:
             correspondent="ACME",
             document_type="Invoice",
             tags=("urgent", "2024"),
+            tag_ids=(),
             created="2024-03-01T00:00:00Z",
             page_count=3,
         )
@@ -103,6 +105,7 @@ class TestLibraryWireModels:
             correspondent="ACME",
             document_type="Invoice",
             tags=("urgent",),
+            tag_ids=(),
             created="2024-03-01T00:00:00Z",
             page_count=3,
         )

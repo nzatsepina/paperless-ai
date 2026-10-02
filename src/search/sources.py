@@ -116,7 +116,8 @@ def _build_source(
 
     A document can be missing from the index look-up if it was pruned between
     retrieval and assembly — a rare race. The source is still returned (the
-    chunk text is real); only the taxonomy-resolved fields fall back to None.
+    chunk text is real); only the taxonomy-resolved fields — and ``tag_ids``,
+    which is then unknown rather than empty — fall back to None.
     """
     return SourceDocument(
         document_id=document_id,
@@ -128,6 +129,7 @@ def _build_source(
         paperless_url=_paperless_url(paperless_public_url, document_id),
         score=score,
         relevance_tier=tier,
+        tag_ids=indexed.tag_ids if indexed is not None else None,
     )
 
 

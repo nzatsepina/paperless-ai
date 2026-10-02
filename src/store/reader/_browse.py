@@ -67,6 +67,11 @@ def _order_by(sort: str, descending: bool) -> str:
     return f"{column} {direction}, d.id {direction}"
 
 
+# rationale: over the §3.1 60-line ceiling. Most of the body is the count and
+# page SQL, which must run under one held lock so the total matches the page,
+# with the page's tag names resolved inside that same read. This change only
+# threads the raw tag ids into each row; a split would widen a leak-fix diff
+# (spec 20261002-caller-scope-hard, Risks).
 def list_documents(
     conn: sqlite3.Connection,
     query_lock: threading.Lock,
@@ -158,6 +163,7 @@ def list_documents(
                 correspondent=row["correspondent_name"],
                 document_type=row["document_type_name"],
                 tags=tag_names,
+                tag_ids=tuple(tag_ids),
                 created=row["created"],
                 page_count=row["page_count"],
             )

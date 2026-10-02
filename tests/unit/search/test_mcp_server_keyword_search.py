@@ -26,6 +26,7 @@ def _summary(doc_id: int = 42) -> DocumentSummary:
         correspondent="Acme",
         document_type="Invoice",
         tags=("tax",),
+        tag_ids=(),
         created="2024-01-01T00:00:00+00:00",
         page_count=2,
     )
