@@ -41,24 +41,39 @@ Authentication (web-redesign §5):
 
 Allowed deps: search (core, api_keys, auth, sessions, models, sources, wire,
     identity, offload, spend_quota), store (SearchFilters), common (paperless,
-    config), appdb (connection), mcp SDK, starlette. The ``app.db`` path is
+    config), appdb (connection), mcp SDK, pydantic (ValidationError), starlette. The ``app.db`` path is
     injected by the app factory; this module owns no SQL and opens a fresh
     connection per request, mirroring ``search.deps.get_app_db``.
 Forbidden: FastAPI (api.py), direct LLM calls. ``fetch_documents`` does proxy
     to Paperless over HTTP, but only through an injected per-request
     ``PaperlessClient`` run off the loop — mirroring ``search.document_routes``.
+
+# rationale: this file exceeds the §3.1 500-line guideline. It is the one MCP
+# boundary: the auth middleware, the strict FastMCP subclass, and the five tool
+# closures share the per-request core resolution, the spend-quota scaffold
+# (``_run_tool``) and the filter parse, and the closures must be registered on
+# one FastMCP instance. The caller-scope change that last touched it is a leak
+# fix; splitting the module there would move unrelated code and widen that
+# diff past the fix (spec 20261002-caller-scope-hard, Risks). The imported
+# names exceed the §3.1 30-name cap too: the module already imported 40, since
+# this one boundary wires session and API-key auth, the spend quota, the core,
+# the store's filter shape, the MCP SDK and the ASGI transport; the caller-scope
+# change adds five (Sequence, ToolError, ValidationError, ContentBlock, MCPTool)
+# for the strict server and the filter error. Only that split would lower it.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -84,9 +99,47 @@ from store import SearchFilters
 
 if TYPE_CHECKING:
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.types import ContentBlock
+    from mcp.types import Tool as MCPTool
 
     from common.config import Settings
     from search.core import SearchCore
+
+# The descriptions of the three tools that take caller filters live here, not
+# inline in _register_search_tools, to shrink that registrar.
+_SEMANTIC_SEARCH_DESCRIPTION = (
+    "PREFERRED, no-cost search — use for almost every query. Returns "
+    "ranked source documents (snippets + Paperless deep-links) matching "
+    "the query; no synthesised answer. Makes zero LLM calls and does "
+    "not bill the archive owner. Read the sources and synthesise the "
+    "answer yourself. Optional 'filters' narrows by correspondent, "
+    "document type, tag, or date. Filters are a hard scope: every "
+    "returned document matches every filter, and they are never "
+    "relaxed; multiple tag_ids are ANDed (a document must carry every "
+    "tag)."
+)
+_DEEP_SEARCH_DESCRIPTION = (
+    "COSTLY, last-resort search. Runs the archive's server-side agentic "
+    "pipeline (planner + judge + synthesiser) and returns a written "
+    "answer plus sources. Spends the archive owner's paid LLM API "
+    "budget on every call. Prefer semantic_search and synthesise "
+    "yourself; only call this when you truly cannot. Optional 'filters' "
+    "narrows results. Filters are a hard scope: every returned document "
+    "matches every filter, and they are never relaxed; multiple tag_ids "
+    "are ANDed (a document must carry every tag)."
+)
+_KEYWORD_SEARCH_DESCRIPTION = (
+    "Free. Exact full-text keyword search over document content plus "
+    "title/correspondent/type, optionally narrowed by correspondent_id, "
+    "document_type_id, tag_ids, date_from/date_to; returns a ranked "
+    "DOCUMENT list (not passages). Use for exact terms, names, or "
+    "reference numbers, or to enumerate/filter (e.g. every document "
+    "tagged X from 2024). Omit 'query' to list documents by filter "
+    "alone. Discover valid filter ids with list_filters. Filters are a "
+    "hard scope (never relaxed); multiple tag_ids are ANDed (a document "
+    "must carry every tag). Makes no LLM call. 'limit' defaults to 20 "
+    "(max 50); 'offset' paginates."
+)
 
 
 def _default_paperless_factory(settings: Settings) -> PaperlessClient:
@@ -280,24 +333,41 @@ def _to_search_filters(raw: dict[str, Any] | None) -> SearchFilters | None:
     through the :class:`~search.wire.FilterRequest` Pydantic model — the MCP
     server is an HTTP-shaped boundary, so Pydantic validation here is the
     documented pattern (CODE_GUIDELINES §5.6, §10.4) — then delegates to the
-    one shared :func:`~search.wire.to_search_filters` converter.  Unknown keys
-    are ignored; ``None`` or an empty dict means no filters.
+    one shared :func:`~search.wire.to_search_filters` converter.  The filters
+    are a hard scope, so a malformed one (unknown key, non-ISO date, empty
+    ``tag_ids``) is rejected, never ignored; ``None`` or an empty dict means
+    no filters.  The one converter all three search tools call, so every tool
+    raises the same message.
 
     Args:
         raw: The raw filters dict from the tool call, or ``None``.
 
     Returns:
         A :class:`SearchFilters` instance, or ``None`` when no filters apply.
+
+    Raises:
+        ValueError: Naming each offending key and Pydantic's reason.  The
+            message echoes only the caller's own input, so the chain is kept
+            (CODE_GUIDELINES §6.3).
     """
     if not raw:
         return None
-    return to_search_filters(FilterRequest.model_validate(raw))
+    try:
+        request = FilterRequest.model_validate(raw)
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'filters'}: "
+            f"{error['msg']}"
+            for error in exc.errors()
+        )
+        raise ValueError(f"invalid filters — {problems}") from exc
+    return to_search_filters(request)
 
 
 def _run_search_tool(
     *,
     query: str,
-    filters: dict[str, Any] | None,
+    filters: SearchFilters | None,
     core_call: Callable[[str, SearchFilters | None, str | None], SearchResult],
     error_event: str,
     asker: str | None = None,
@@ -306,14 +376,16 @@ def _run_search_tool(
 
     The shared body of both MCP tools.  It normalises *query* at the boundary
     via :func:`~search.wire.normalise_query` (trim, reject empty/whitespace-only,
-    enforce the maximum length — §10.4/§10.6), converts the optional *filters*,
-    invokes *core_call*, and serialises the result.  Any failure from the core
+    enforce the maximum length — §10.4/§10.6), invokes *core_call* with the
+    already-validated *filters*, and serialises the result.  Any failure from the core
     is logged with its full traceback server-side and surfaced to the MCP
     client as a sanitised :class:`ValueError` carrying no internal detail.
 
     Args:
         query: The user's query or question.
-        filters: The optional raw filters dict from the tool call.
+        filters: The caller's validated filters (converted by
+            :func:`_to_search_filters` in ``_dispatch``, before any core is
+            resolved), or ``None``.
         core_call: The :class:`~search.core.SearchCore` method to invoke —
             ``retrieve`` for ``semantic_search``, ``answer`` for
             ``deep_search``.
@@ -340,8 +412,7 @@ def _run_search_tool(
     # filesystem paths or internal state) must never reach the MCP client; the
     # full traceback is logged server-side instead.
     try:
-        ui_filters = _to_search_filters(filters)
-        result = core_call(query, ui_filters, asker)
+        result = core_call(query, filters, asker)
         return _serialise_result(result)
     except Exception:
         log.exception(error_event)
@@ -354,6 +425,51 @@ def _run_search_tool(
 # ---------------------------------------------------------------------------
 # MCP app builder
 # ---------------------------------------------------------------------------
+
+
+class _StrictFastMCP(FastMCP):
+    """A FastMCP server that rejects tool arguments the tool does not declare.
+
+    FastMCP drops an undeclared argument name in its generated argument model
+    before the tool runs, and registers its handler with
+    ``call_tool(validate_input=False)`` — so a caller passing ``filter`` for
+    ``filters`` would silently get an unscoped search.  This overrides only the
+    public ``call_tool`` / ``list_tools`` methods: ``call_tool`` is the one
+    enforcement point; ``list_tools`` publishes ``additionalProperties: false``
+    so a schema-driven client learns the rule up front.
+    """
+
+    async def list_tools(self) -> list[MCPTool]:
+        """Return every tool with ``additionalProperties: false`` on its schema.
+
+        Each tool is a copy; the library's own schema object is not mutated.
+        """
+        return [
+            tool.model_copy(
+                update={
+                    "inputSchema": {**tool.inputSchema, "additionalProperties": False}
+                }
+            )
+            for tool in await super().list_tools()
+        ]
+
+    # rationale: Any mirrors the overridden FastMCP.call_tool signature — tool
+    # arguments and structured results are arbitrary JSON, and an override
+    # must keep its base method's parameter and return types.
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        """Reject any argument not in the tool's ``inputSchema`` properties.
+
+        An unknown tool name is left to FastMCP's own error.
+        """
+        tool = next((t for t in await self.list_tools() if t.name == name), None)
+        if tool is not None:
+            declared = set(tool.inputSchema.get("properties", {}))
+            unknown = sorted(set(arguments) - declared)
+            if unknown:
+                raise ToolError(f"unknown argument(s) for {name}: {', '.join(unknown)}")
+        return await super().call_tool(name, arguments)
 
 
 class _McpApp:
@@ -399,6 +515,12 @@ class _McpApp:
         await self._asgi_app(scope, receive, send)
 
 
+# rationale: over the §3.1 60-line ceiling before this change — the five MCP
+# tools are closures that must register on one FastMCP instance and share the
+# captured `resolve_core`, `app_db_path`, `search_semaphore` and
+# `paperless_factory`. The caller-scope change shortens it (its three
+# filter-taking descriptions move to module constants); a split would widen a
+# leak-fix diff (spec 20261002-caller-scope-hard, Risks).
 def _register_search_tools(
     mcp: FastMCP,
     resolve_core: Callable[[str], SearchCore],
@@ -512,6 +634,11 @@ def _register_search_tools(
         from the worker thread (``run_blocking`` does not propagate it).
         """
         raw_asker = mcp_asker.get()
+        # Validate the filters BEFORE _run_tool: a rejected filter never
+        # resolves the core, checks the spend quota or takes the semaphore, and
+        # its clear message is not swallowed by _run_search_tool's sanitising
+        # outer-boundary catch.
+        ui_filters = _to_search_filters(filters)
 
         def _build(core: SearchCore) -> str:
             asker = resolve_asker(
@@ -519,7 +646,7 @@ def _register_search_tools(
             )
             return _run_search_tool(
                 query=query,
-                filters=filters,
+                filters=ui_filters,
                 core_call=lambda text, ui_filters, asker_arg: core_call(
                     core, text, ui_filters, asker_arg
                 ),
@@ -531,14 +658,7 @@ def _register_search_tools(
 
     @mcp.tool(
         name="semantic_search",
-        description=(
-            "PREFERRED, no-cost search — use for almost every query. Returns "
-            "ranked source documents (snippets + Paperless deep-links) matching "
-            "the query; no synthesised answer. Makes zero LLM calls and does "
-            "not bill the archive owner. Read the sources and synthesise the "
-            "answer yourself. Optional 'filters' narrows by correspondent, "
-            "document type, tag, or date."
-        ),
+        description=_SEMANTIC_SEARCH_DESCRIPTION,
     )
     async def semantic_search(
         query: str,
@@ -559,14 +679,7 @@ def _register_search_tools(
 
     @mcp.tool(
         name="deep_search",
-        description=(
-            "COSTLY, last-resort search. Runs the archive's server-side agentic "
-            "pipeline (planner + judge + synthesiser) and returns a written "
-            "answer plus sources. Spends the archive owner's paid LLM API "
-            "budget on every call. Prefer semantic_search and synthesise "
-            "yourself; only call this when you truly cannot. Optional 'filters' "
-            "narrows results."
-        ),
+        description=_DEEP_SEARCH_DESCRIPTION,
     )
     async def deep_search(
         question: str,
@@ -624,16 +737,7 @@ def _register_search_tools(
 
     @mcp.tool(
         name="keyword_search",
-        description=(
-            "Free. Exact full-text keyword search over document content plus "
-            "title/correspondent/type, optionally narrowed by correspondent_id, "
-            "document_type_id, tag_ids, date_from/date_to; returns a ranked "
-            "DOCUMENT list (not passages). Use for exact terms, names, or "
-            "reference numbers, or to enumerate/filter (e.g. every document "
-            "tagged X from 2024). Omit 'query' to list documents by filter "
-            "alone. Discover valid filter ids with list_filters. Makes no LLM "
-            "call. 'limit' defaults to 20 (max 50); 'offset' paginates."
-        ),
+        description=_KEYWORD_SEARCH_DESCRIPTION,
     )
     async def keyword_search(
         query: str | None = None,
@@ -754,7 +858,7 @@ def build_mcp_app(
     Returns:
         An ASGI application wrapping the FastMCP server with cookie/API-key auth.
     """
-    mcp = FastMCP(
+    mcp = _StrictFastMCP(
         name="paperless-search",
         instructions=(
             "Search and read a personal Paperless-ngx document archive. Five "
@@ -782,6 +886,10 @@ def build_mcp_app(
             "answer; spends the owner's paid LLM budget every call. Prefer "
             "semantic_search + your own synthesis; use only when explicitly "
             "asked for the archive to answer itself.\n\n"
+            "Search filters are a hard scope: every returned document matches "
+            "every filter, they are never relaxed, and multiple tag_ids are "
+            "ANDed. An unknown filter key, a non-ISO date or an empty tag_ids "
+            "is rejected with an error.\n\n"
             "Default to semantic_search. Discover filters with list_filters. "
             "Read whole documents with fetch_documents. Reach for deep_search "
             "only with a concrete reason the free tools cannot serve."
