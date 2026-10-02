@@ -786,6 +786,8 @@ class Retriever:
     def retrieve(
         self,
         specs: tuple[RetrievalSpec, ...],
+        *,
+        scope: SearchFilters | None,
     ) -> tuple[list[RetrievedChunk], RetrievalSignal]:
         """Search every spec independently, fuse across specs, return top-K chunks.
 
@@ -806,15 +808,24 @@ class Retriever:
         vector passes (None when no vector pass returned a hit) and
         ``has_keyword_hit`` is True when any keyword pass returned rows.
 
+        *scope* is the caller's hard filter scope, re-applied here to every
+        spec with :func:`_intersect` before any store call — the one choke point
+        no relaxation path (recall twins, broaden-and-retry, refinement) can
+        bypass.  ``_intersect`` is idempotent, so an already-scoped spec is
+        unchanged.  Keyword-only, with no default, so no call site can omit it
+        by accident.
+
         Args:
             specs: The resolved retrieval specs (from ``resolve_specs``).
+            scope: The caller's filters (``ui_filters``), or ``None`` for an
+                unscoped caller.
 
         Returns:
             A 2-tuple ``(chunks, signal)`` — *chunks* sorted by rrf_score
             descending (empty when nothing was found), *signal* capturing
             pre-fusion quality.
         """
-        passes = self._run_passes(specs)
+        passes = self._run_passes(specs, scope)
 
         best_vector_similarity = _distance_to_similarity(passes.best_vector_distance)
         signal = RetrievalSignal(
@@ -845,13 +856,15 @@ class Retriever:
         )
         return chunks, signal
 
-    def _run_passes(self, specs: tuple[RetrievalSpec, ...]) -> _RetrievalPasses:
+    def _run_passes(
+        self, specs: tuple[RetrievalSpec, ...], scope: SearchFilters | None
+    ) -> _RetrievalPasses:
         """Run each spec's store search and collect the ranked lists and signals.
 
         Semantic specs are embedded together in one batch and each embedding is
-        searched with its own spec's filters; keyword specs are searched
-        directly.  Returns the accumulated ranked lists plus the absolute
-        vector signals RRF discards.
+        searched with its own spec's filters intersected with *scope*; keyword
+        specs are searched likewise.  Returns the accumulated ranked lists plus
+        the absolute vector signals RRF discards.
         """
         per_spec_k = self._settings.SEARCH_PER_SPEC_K
         ranked_lists: list[list[ChunkHit]] = []
@@ -872,7 +885,9 @@ class Retriever:
         # _embed_queries returns [] on failure; zip then yields nothing, so a
         # dead embedding backend simply contributes no vector passes.
         for spec, embedding in zip(semantic_specs, embeddings):
-            hits = self._store_reader.vector_search(embedding, per_spec_k, spec.filters)
+            hits = self._store_reader.vector_search(
+                embedding, per_spec_k, _intersect(spec.filters, scope)
+            )
             if not hits:
                 continue
             ranked_lists.append(hits)
@@ -889,7 +904,7 @@ class Retriever:
             if spec.mode != "keyword" or not spec.keywords:
                 continue
             hits = self._store_reader.keyword_search(
-                list(spec.keywords), per_spec_k, spec.filters
+                list(spec.keywords), per_spec_k, _intersect(spec.filters, scope)
             )
             if hits:
                 has_keyword_hit = True

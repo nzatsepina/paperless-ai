@@ -52,6 +52,10 @@ Forbidden: no FastAPI, no MCP SDK, no sqlite3, no direct LLM/HTTP calls.
 # to §6.3 and §14.3; and the module-level helpers are each cited by tests.
 # Splitting _LlmBudget into its own module would add an import edge with no
 # cohesion benefit. The Wave 4 simplification audit accepted this length.
+# The imported names exceed the §3.1 30-name cap for the same reason: the one
+# orchestrator drives every pipeline stage and names each stage's I/O shapes,
+# so only a split would lower the count, and the caller-scope change adds no
+# import (spec 20261002-caller-scope-hard, Risks).
 """
 
 from __future__ import annotations
@@ -878,7 +882,7 @@ class SearchCore:
         tele.start("retrieve", "Retrieving documents")
         started = time.monotonic()
         chunks, signal, broadened = self._retrieve_with_broaden(
-            plan, specs, facets, today
+            plan, specs, facets, today, ui_filters
         )
         doc_ids = {c.document_id for c in chunks}
         documents_by_id = {
@@ -990,6 +994,7 @@ class SearchCore:
         specs: tuple[RetrievalSpec, ...],
         facets: FacetSet,
         today: date,
+        ui_filters: SearchFilters | None,
     ) -> tuple[list[RetrievedChunk], RetrievalSignal, bool]:
         """Retrieve for the resolved *specs*; broaden and retry once if empty.
 
@@ -1010,7 +1015,7 @@ class SearchCore:
             (filter-dropped) pass ran. The signal is forwarded to Layer 2 and
             *broadened* feeds the retrieve-phase detail.
         """
-        chunks, signal = self._retriever.retrieve(specs)
+        chunks, signal = self._retriever.retrieve(specs, scope=ui_filters)
         if chunks:
             return chunks, signal, False
 
@@ -1019,7 +1024,7 @@ class SearchCore:
             broaden_plan(plan), facets, ui_filters=None, today=today
         )
         log.info("search.retrieval_broadened")
-        chunks, signal = self._retriever.retrieve(broadened_specs)
+        chunks, signal = self._retriever.retrieve(broadened_specs, scope=ui_filters)
         return chunks, signal, True
 
     def _judge_candidates(
@@ -1212,6 +1217,12 @@ class SearchCore:
         )
         return outcome
 
+    # rationale: over the §3.1 60-line ceiling. One refinement pass is one
+    # ordered sequence — re-plan, the clarify and no-op exits, retrieve, merge,
+    # re-judge, re-synthesise — sharing the LLM budget, the telemetry and one
+    # returned triple. This change only passes the caller scope to its
+    # retrieve; a split would widen a leak-fix diff (spec
+    # 20261002-caller-scope-hard, Risks).
     def _refine(
         self,
         query: str,
@@ -1334,7 +1345,7 @@ class SearchCore:
             )
             return outcome, previous_chunks, prior_specs
 
-        new_chunks, _signal = self._retriever.retrieve(new_specs)
+        new_chunks, _signal = self._retriever.retrieve(new_specs, scope=ui_filters)
         merged = merge_chunks(previous_chunks, new_chunks)
         # Top up the shared look-up with only the genuinely-new document ids the
         # re-retrieve introduced, then reuse it for the re-judge and synthesise —
