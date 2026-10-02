@@ -271,6 +271,9 @@ every check holds identically on MCP and HTTP.
   function in `web/src/api/client/search.ts` — `toSearchRequestBody(body:
   SearchRequest): string` — serialises the body with `filters.tag_ids` removed
   when it is empty; both senders call it instead of `JSON.stringify(body)`.
+  A `filters` of `null` or absent (`SearchRequest.filters` is optional) passes
+  through unchanged — `searchStream.test.ts` already asserts a posted
+  `filters: null` body and stays green unmodified.
   `searchStream.ts` imports it from `./search` (ESLint boundaries allow `api` →
   `api`; its "Allowed deps" header gains `search`). `FilterRequest.tag_ids`
   stays required in `web/src/api/types/search.ts`; the backend field already
@@ -380,7 +383,12 @@ end-to-end tests green. Each layer therefore has its own pin:
 - **L2 site:** `_retrieve_with_broaden()` resolves the broadened plan with the
   caller scope — observed on the specs passed to the second `retrieve()` call
   (a spy on `Retriever.retrieve`, reading its `specs` argument, not the store
-  call, which the choke point would scope anyway). **L3 path:** `_refine()`'s
+  call, which the choke point would scope anyway). Setup: the same twin-capped
+  plan as the D9 test below, the only case where broaden still runs — a plain
+  scoped search with an empty pass 1 makes no second call under D9, so it
+  cannot host this pin. Mutation (3) is still caught: with `ui_filters=None`
+  the broadened keys differ from pass 1's, the skip does not fire, and the spy
+  sees unscoped specs. **L3 path:** `_refine()`'s
   re-plan specs carry the scope (it already passes `ui_filters`; pinned so a
   later edit cannot drop it). Observation point: the `refine` phase detail —
   `new_specs[*].filters.tag_ids`, emitted by `_emit_refine_marker()` from
@@ -414,6 +422,11 @@ end-to-end tests green. Each layer therefore has its own pin:
   also needs a facet set that contains the guessed correspondent.
   `test_retrieve_detail_reports_counts_and_not_broadened` is checked.
 - Every `retrieve(specs)` test call gains `scope=None`.
+- SPA: no existing test asserts a search body carrying `tag_ids`
+  (`web/src/api/client.test.ts` checks only `credentials` on `search()`;
+  `web/src/api/hooks.test.ts`'s `tag_ids: []` is a library `useDocuments`
+  query, not a search body), so none needs updating; the `filters: null`
+  assertion in `searchStream.test.ts` must stay green.
 
 ### Boundary tests
 
@@ -524,7 +537,8 @@ the in-process result cache (L10), which may hold pre-fix answers.
 
 `git diff --stat 86ab49f 994f3b3 -- src tests web` is empty, so every anchor
 verified on `86ab49f` above still holds. Each command below runs as written with
-ripgrep (`|` alternation), from the repository root; the trailing comment is
+ripgrep (`|` alternation; the session's `rg` is Claude Code's bundled ripgrep,
+invoked with no added flags), from the repository root; the trailing comment is
 what it printed. Kept in a fenced block, not a table, so no Markdown escaping
 alters the command.
 
