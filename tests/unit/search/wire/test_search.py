@@ -213,3 +213,23 @@ def test_filter_request_accepts_document_type_id_with_valid_integer() -> None:
     """A filter with valid positive document_type_id validates."""
     filters = FilterRequest(document_type_id=99)
     assert filters.document_type_id == 99
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"correspondent_id": 2**63},
+        {"document_type_id": 2**63},
+        {"tag_ids": [1, 2**63]},
+    ],
+)
+def test_filter_request_rejects_an_id_above_the_sqlite_integer_range(
+    raw: dict[str, object],
+) -> None:
+    """An id SQLite cannot bind is rejected here, not as a 500 at the store."""
+    with pytest.raises(ValidationError, match="less than or equal to"):
+        FilterRequest.model_validate(raw)
+
+
+def test_filter_request_accepts_the_largest_sqlite_integer_id() -> None:
+    assert FilterRequest(correspondent_id=2**63 - 1).correspondent_id == 2**63 - 1

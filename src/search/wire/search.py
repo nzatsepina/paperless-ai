@@ -13,7 +13,7 @@ Forbidden: FastAPI, sqlite3, any I/O.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -46,6 +46,13 @@ MAX_QUERY_LENGTH = 4000
 # at both surfaces via :func:`normalise_query`.
 MIN_QUERY_LENGTH = 1
 
+# SQLite's INTEGER is a signed 64-bit value: a larger id cannot be bound (the
+# driver raises OverflowError, which would surface as a 500 / "search failed"
+# instead of a clear rejection).  A filter id is a strict positive integer
+# within that range.
+_MAX_ID = 2**63 - 1
+_FilterId = Annotated[StrictInt, Field(gt=0, le=_MAX_ID)]
+
 
 # ---------------------------------------------------------------------------
 # Request models
@@ -68,12 +75,12 @@ class FilterRequest(BaseModel):
 
     date_from: str | None = None
     date_to: str | None = None
-    correspondent_id: StrictInt | None = Field(default=None, gt=0)
-    document_type_id: StrictInt | None = Field(default=None, gt=0)
+    correspondent_id: _FilterId | None = None
+    document_type_id: _FilterId | None = None
     # Bounded to 64 to match the GET ``/api/documents`` counterpart
     # (``routes.py``); a filter naming more tags than any real instance holds
     # is malformed, and an unbounded list is a cheap payload-bloat vector.
-    tag_ids: list[StrictInt] = Field(default_factory=list, max_length=64)
+    tag_ids: list[_FilterId] = Field(default_factory=list, max_length=64)
 
     @field_validator("date_from", "date_to")
     @classmethod
@@ -83,7 +90,7 @@ class FilterRequest(BaseModel):
 
     @field_validator("tag_ids")
     @classmethod
-    def _validate_tag_ids_positive(cls, v: list[StrictInt]) -> list[StrictInt]:
+    def _validate_tag_ids_positive(cls, v: list[int]) -> list[int]:
         """Reject tag_ids with non-positive values (security: ids must be > 0)."""
         for tag_id in v:
             if tag_id <= 0:
