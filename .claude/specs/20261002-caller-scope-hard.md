@@ -37,14 +37,17 @@ caller-supplied filters only.
 1. **R1 — hard scope.** On every search entry point (MCP `semantic_search`,
    `deep_search`, `keyword_search`; HTTP `POST /api/search`, `/api/search/stream`)
    every returned document satisfies every caller filter; no path, current or
-   future, may drop or loosen one.
+   future, may drop or loosen one. Mechanically guaranteed for every path through
+   `Retriever` (semantic, deep, web — D2); `keyword_search` never enters
+   `Retriever` and is held by test only (L8).
 2. **R2 — planner recall insurance kept.** Twins and broaden still strip filters
    the planner *inferred*.
 3. **R3 — fail closed.** A malformed caller filter is rejected with a clear error.
 4. **R4 — verifiable.** Results expose each source's tag ids.
 5. **R5 — stated.** MCP tool text says filters are a hard scope and `tag_ids` AND.
-6. **R6 — unscoped callers unchanged.** No filters → the same documents as today;
-   only a broaden that would repeat pass 1 is skipped (D9).
+6. **R6 — unscoped callers unchanged.** No filters → the same documents as today,
+   except that a broaden that would repeat pass 1 is skipped (D9) — and with it
+   the incidental second embedding attempt that broaden made today (see D9).
 
 ## Decisions (human, binding)
 
@@ -62,10 +65,13 @@ caller-supplied filters only.
   specs the choke point would collapse into duplicates. *Why:* a per-site fix is
   only as good as the next author's memory — a new relaxation path, or an
   upstream merge re-adding one, is caught by the choke point without anyone
-  remembering the rule.
+  remembering the rule. **Limit:** the choke point covers only paths that
+  enter `Retriever`. `SearchCore.keyword_search()` hands `ui_filters` straight
+  to `keyword_document_search()` / `list_documents()` and never reaches it, so a
+  future edit there is caught only by the L8 end-to-end test, not by D2.
 - **D3 — reject malformed filters at the boundary (fail closed).** Unknown keys,
-  non-ISO `date_from` / `date_to`, and (MCP only, see *Boundary validation*) an
-  explicitly empty `tag_ids`. *Why:* a typo'd key (`tag_id`) or `tag_ids: []`
+  non-ISO `date_from` / `date_to`, and an explicitly empty `tag_ids` — on both
+  MCP and HTTP (D11). *Why:* a typo'd key (`tag_id`) or `tag_ids: []`
   today yields an unscoped search with no error — a hard-scope contract with a
   fail-open input is hollow (CODE_GUIDELINES §1.11).
 - **D4 — results carry `tag_ids`.** `semantic_search`, `deep_search` (same
@@ -99,10 +105,40 @@ caller-supplied filters only.
   twins keep the caller scope, every twin equals what `broaden_plan()` + scope
   resolves to, so the broadened searches are a subset of pass 1 whenever every
   twin ran. Broaden-and-retry then fires **only when `max_specs` truncated the
-  twins** (`SEARCH_PLANNER_MAX_SPECS`) — D9 nearly retires it. Kept, not
-  deleted: it still covers the truncated case at no cost otherwise.
+  twins** — that is, when the resolved pass-1 specs already number at least
+  `SEARCH_PLANNER_MAX_SPECS`, so `_append_unfiltered_twins()` breaks on
+  `len(out) >= max_specs` before appending any twin, and at least one of them
+  resolved to a real planner filter. (The planner itself caps the plan at
+  `max_specs` — `capped = tuple(planned_specs[:max_specs])` in
+  `src/search/planner.py` — so "more specs than the cap" never reaches
+  `resolve_specs()`.) D9 nearly retires broaden; it is kept, not deleted, because
+  it still covers the truncated case at no cost otherwise.
+  **Second consequence — the incidental embedding retry is gone, deliberately.**
+  When the embedding call fails, `_embed_queries()` returns `[]` on
+  `EMBEDDING_FAILURE_EXCEPTIONS` and `_run_passes()` runs no vector pass; today
+  the broaden re-calls `embed`, which could succeed after a transient outage.
+  Under D9 the broadened keys equal pass 1's, so that second call is skipped.
+  Retrying a transient embedding failure is the job of the `@retry` on
+  `EmbeddingClient._embed_batch()`, which `EmbeddingClient.embed()` calls
+  (`src/common/embeddings.py`), not of a recall
+  mechanism that retried by accident; R6 is exact with that stated.
 - **D10 — deploy is operational, not code scope.** After the human merges, the
   maintainer redeploys the published image; see *Deploy note*.
+- **D11 — `tag_ids: []` is rejected on both surfaces; the SPA stops sending it.**
+  *(Taken at spec gate round 1, replacing an MCP-only rule; presented for the
+  human's approval with this spec.)* An explicitly present, empty `tag_ids`
+  is rejected on MCP **and** HTTP, and the SPA omits `tag_ids` from the request
+  body when no tag is chosen (*Boundary validation*, "SPA request body").
+  *Why:* fail-closed boundary, consistent with the human's D3 decision to reject
+  malformed filters. `POST /api/search` and `/api/search/stream` are not
+  SPA-only: they sit behind `require_api_scope` (`src/search/api.py`,
+  `src/search/deps.py`) and README.md / `docs/configuration.md` describe API
+  keys as the credential of programmatic callers. A programmatic multi-tenant
+  caller whose tenant-tag lookup yields `[]` would otherwise get an unscoped
+  200 over HTTP — exactly the Origin's failure, on the surface the old rule left
+  open. The only reason HTTP accepted `[]` was that the SPA always sends it;
+  changing the SPA removes that constraint at its source instead of keeping a
+  fail-open contract to suit one client.
 
 ## Leak inventory
 
@@ -145,6 +181,19 @@ Every path where `ui_filters` can be dropped or loosened. Anchors are
 - `SearchCore._retrieve_with_broaden()` gains a `ui_filters` parameter (today it
   has none) and passes it as `scope` to both `retrieve` calls; `_refine()`
   already receives `ui_filters`.
+- **§5.8 fix, in this PR.** `_retrieve_with_broaden()` today returns the 3-tuple
+  `tuple[list[RetrievedChunk], RetrievalSignal, bool]`, unpacked positionally by
+  its one caller, `_retrieve_phase()` (`chunks, signal, broadened = …`). This
+  change touches the function and adds a third return branch (D9), so per the
+  CODE_GUIDELINES preamble ("the divergence is fixed in the PR that next touches
+  it") it is fixed here: the return becomes a new module-private frozen
+  dataclass `_BroadenOutcome` (`chunks: list[RetrievedChunk]`,
+  `signal: RetrievalSignal`, `broadened: bool`), declared in
+  `src/search/core.py` beside `_RetrievalPhaseResult` with the same
+  `@dataclass(frozen=True, slots=True)` decorator. A dataclass, not a pair:
+  the pair `(retrieve() result, broadened)` would nest a tuple inside a tuple
+  and still be unpacked positionally; `_RetrievalPhaseResult` is the module's
+  own precedent for exactly this.
 
 ### Site fixes
 
@@ -166,8 +215,7 @@ Every path where `ui_filters` can be dropped or loosened. Anchors are
   `max_specs`) does not, so it cannot be reused as is. The skip compares
   *searches run*: if every broadened search key is already in pass 1's key set,
   the broaden would add nothing. **Return value of the skip branch:**
-  `([], <pass-1 signal>, False)` — `chunks` empty, `signal` from pass 1,
-  `broadened=False`. Consumers: `_retrieve_phase()` writes `broadened` into the
+  `_BroadenOutcome(chunks=[], signal=<pass-1 signal>, broadened=False)`. Consumers: `_retrieve_phase()` writes `broadened` into the
   `retrieve` trace detail; the empty `chunks` reach the existing
   `reason="empty_retrieval"` no-match in `_answer_uncached()` exactly as an
   empty broaden does today.
@@ -184,15 +232,15 @@ ignored"), mcp_server `_to_search_filters()` ("Unknown keys are ignored").
 
 ## Boundary validation (D3)
 
-All on `FilterRequest` (`src/search/wire/search.py`) unless marked MCP-only;
-`FilterRequest` is the single parse for both surfaces (MCP via
-`_to_search_filters()`, HTTP via `SearchRequest.filters`).
+All on `FilterRequest` (`src/search/wire/search.py`), the single parse for both
+surfaces (MCP via `_to_search_filters()`, HTTP via `SearchRequest.filters`), so
+every check holds identically on MCP and HTTP.
 
-| Check | HTTP | MCP | Evidence for the HTTP decision |
+| Check | HTTP | MCP | Evidence the SPA is unaffected |
 |---|---|---|---|
 | Unknown key → reject (`model_config = ConfigDict(extra="forbid")`) | yes | yes | The SPA sends exactly the five known keys: `paramsToFilters()` (`web/src/lib/parseSearchParams.ts`) builds them, `web/src/features/search/useStreamingSearch.ts` posts `{ query, filters }` verbatim |
 | `date_from` / `date_to` not a valid ISO date → reject | yes | yes | SPA dates come from native `type="date"` inputs (`web/src/components/patterns/FilterControls/FilterControls.tsx`), always `YYYY-MM-DD` |
-| Explicit `tag_ids: []` → reject | **no** | yes | The SPA *always* sends `tag_ids`, `[]` when no tag is chosen — `FilterRequest.tag_ids` is non-optional in `web/src/api/types/search.ts` and `paramsToFilters()` always sets it. Rejecting on HTTP would 422 every untagged web search |
+| Explicit `tag_ids: []` → reject | yes | yes | Today the SPA *always* sends `tag_ids`, `[]` when no tag is chosen (`paramsToFilters()` always sets it). The SPA change below omits it when empty, so an untagged web search sends no `tag_ids` key (D11) |
 
 - **Date rule.** A value is accepted only when `normalise_iso_date()`
   (`src/search/dates.py`) returns a date **and** the whole string parses with
@@ -204,10 +252,29 @@ All on `FilterRequest` (`src/search/wire/search.py`) unless marked MCP-only;
   narrows to nothing, which cannot leak. `_exclusive_upper_bound()` keeps its
   tolerance — planner dates are already validated in `_resolve_dates()`, and
   caller dates can no longer reach it malformed.
-- **Empty tag list (MCP only)** lives in mcp_server `_to_search_filters()`:
-  `"tag_ids" in raw and not raw["tag_ids"]` raises. `filters` omitted, `None` or
-  `{}` still means "no filters" — an empty object names no constraint, so nothing
-  is dropped.
+- **Empty tag list (both surfaces, D11)** is a `model_validator(mode="after")` on
+  `FilterRequest`: `"tag_ids" in self.model_fields_set and not self.tag_ids`
+  raises. `model_fields_set` is what tells an explicit `[]` from an omitted key
+  (`tag_ids` keeps its `default_factory=list`); `src/search/wire/api_keys.py`
+  already uses `model_fields_set` the same way. `filters` omitted, `None` or `{}`
+  still means "no filters" — an empty object names no constraint, so nothing is
+  dropped.
+- **SPA request body (D11).** `paramsToFilters()`
+  (`web/src/lib/parseSearchParams.ts`) is **not** changed: its `FilterRequest`
+  is UI state, and `FilterControls`, `ActiveFiltersStrip` and
+  `features/search/filters.ts` read `filters.tag_ids` as a required array. The
+  omission happens where the wire body is built. Both senders today do
+  `JSON.stringify(body)` on a `SearchRequest`: `search()`
+  (`web/src/api/client/search.ts`, `POST /api/search`, used by `MatchCard` via
+  `useSearch`) and `streamSearch()` (`web/src/api/client/searchStream.ts`,
+  `POST /api/search/stream`, used by `useStreamingSearch`). One new exported
+  function in `web/src/api/client/search.ts` — `toSearchRequestBody(body:
+  SearchRequest): string` — serialises the body with `filters.tag_ids` removed
+  when it is empty; both senders call it instead of `JSON.stringify(body)`.
+  `searchStream.ts` imports it from `./search` (ESLint boundaries allow `api` →
+  `api`; its "Allowed deps" header gains `search`). `FilterRequest.tag_ids`
+  stays required in `web/src/api/types/search.ts`; the backend field already
+  defaults to `[]`, so an absent key is valid on the wire.
 - **Error contract.** A rejected filter surfaces to the caller as a clear
   message naming the offending key or value — never the sanitised
   "search failed — see server logs". Today `_run_search_tool()` converts filters
@@ -218,9 +285,11 @@ All on `FilterRequest` (`src/search/wire/search.py`) unless marked MCP-only;
   resolves the core, checks the spend quota or takes the semaphore;
   `_run_search_tool()` then receives `SearchFilters | None`. `_run_tool()` has
   no catch-all of its own (read), so the error reaches the client as raised.
-  Pydantic 2's `ValidationError` subclasses `ValueError`; it is re-raised as a
-  `ValueError` carrying the field name and Pydantic's message (no internal
-  state). HTTP gets FastAPI's standard 422.
+  Pydantic 2's `ValidationError` subclasses `ValueError`; it is caught as `exc`
+  and re-raised with `raise ValueError(<field name + Pydantic's message>) from exc`
+  (CODE_GUIDELINES §6.3 — the message carries no secret or internal state, so the
+  traceback is kept; `from None` is reserved for the sanitised path). HTTP gets
+  FastAPI's standard 422.
 - **Intended behaviour change:** a hand-edited web URL such as `?from=junk` now
   returns 422 instead of a silently unbounded search.
 
@@ -240,10 +309,17 @@ All on `FilterRequest` (`src/search/wire/search.py`) unless marked MCP-only;
   `tests/unit/search/test_fetch.py`, `test_mcp_server_fetch.py`,
   `test_mcp_server_keyword_search.py`, `test_document_routes.py`,
   `tests/unit/search/wire/test_library.py`.
-- `SourceDocument` (`src/search/models.py`) gains `tag_ids: tuple[int, ...] = ()`
-  **after** `relevance_tier` (the last, defaulted field — a non-default field
-  after it is a `TypeError`), filled in `_build_source()` (`src/search/sources.py`) from the indexed row, or
-  `()` when the row was pruned mid-request (that function's documented race).
+- `SourceDocument` (`src/search/models.py`) gains
+  `tag_ids: tuple[int, ...] | None = None` **after** `relevance_tier` (the last,
+  defaulted field — a non-default field after it is a `TypeError`), filled in
+  `_build_source()` (`src/search/sources.py`) from the indexed row, or `None`
+  when the row was pruned mid-request (that function's documented race).
+  `None`, not `()`: `()` means "this document has no tags", which for a scoped
+  search would read as a leak; a pruned row's tags are *unknown* — the genuine
+  absence CODE_GUIDELINES §5.4 reserves `None` for — and `_build_source()`
+  already sets `title`, `correspondent`, `document_type` and `created` to `None`
+  in that case. The D4 receipt treats a `null` `tag_ids` as unverifiable, not
+  failed.
   `semantic_search` and `deep_search` serialise `SearchResult` with
   `dataclasses.asdict` in `_serialise_result()`, so both carry it with no further
   change.
@@ -302,13 +378,19 @@ end-to-end tests green. Each layer therefore has its own pin:
   `tests/unit/search/test_resolve_specs.py` (`ui_filters=None`) stay green
   unchanged (R2/R6).
 - **L2 site:** `_retrieve_with_broaden()` resolves the broadened plan with the
-  caller scope — the broadened specs carry it. **L3 path:** `_refine()`'s
+  caller scope — observed on the specs passed to the second `retrieve()` call
+  (a spy on `Retriever.retrieve`, reading its `specs` argument, not the store
+  call, which the choke point would scope anyway). **L3 path:** `_refine()`'s
   re-plan specs carry the scope (it already passes `ui_filters`; pinned so a
-  later edit cannot drop it).
+  later edit cannot drop it). Observation point: the `refine` phase detail —
+  `new_specs[*].filters.tag_ids`, emitted by `_emit_refine_marker()` from
+  `_spec_detail_for_resolved(new_specs)` (`src/search/core.py`). The store
+  mock's `call_args` cannot be the pin: the choke point re-applies the scope
+  there, so it stays green under mutation (4).
 - **D9:** a scoped `semantic_search` with an empty pass 1 embeds once, makes no
-  second retrieve, and reports `broadened: false`; a plan whose twins were cut by
-  a low `SEARCH_PLANNER_MAX_SPECS` (more filtered planner specs than the cap)
-  still broadens.
+  second retrieve, and reports `broadened: false`; a plan whose twins were cut —
+  at least as many planner specs as `SEARCH_PLANNER_MAX_SPECS`, each resolving to
+  a real filter (a facet set containing the guessed name) — still broadens.
 - **End to end:** the forcing-input table above, which is red on `86ab49f`.
 
 ### Existing tests
@@ -324,13 +406,19 @@ end-to-end tests green. Each layer therefore has its own pin:
   `tests/unit/search/test_core.py` — `test_broaden_retry_runs_before_giving_up`
   and `tests/unit/search/test_core_trace.py` —
   `test_retrieve_detail_marks_broadened_on_second_pass` are re-targeted to a
-  twin-capped setup (low `SEARCH_PLANNER_MAX_SPECS`, more filtered planner specs
-  than it allows) — the only case where broaden still differs from pass 1 under
-  D9; `test_retrieve_detail_reports_counts_and_not_broadened` is checked.
+  twin-capped setup — at least as many planner specs as
+  `SEARCH_PLANNER_MAX_SPECS`, each resolving to a real filter — the only case
+  where broaden still differs from pass 1 under D9. Both use `make_facet_set()`
+  today, whose empty taxonomy drops their `correspondent` guess, so their spec
+  resolves to `_EMPTY_FILTERS` and has no twin to cap; the re-target therefore
+  also needs a facet set that contains the guessed correspondent.
+  `test_retrieve_detail_reports_counts_and_not_broadened` is checked.
 - Every `retrieve(specs)` test call gains `scope=None`.
 
 ### Boundary tests
 
+- `FilterRequest` unit tests: `{"tag_ids": []}` rejected, `{}` and omitted
+  `tag_ids` accepted as "no tag constraint".
 - MCP (`tests/unit/search/test_mcp_server.py`,
   `test_mcp_server_keyword_search.py`): for `semantic_search`, `deep_search`,
   `keyword_search` — `{"tag_id": N}`, `{"tags": [N]}`, `{"tag_ids": []}`,
@@ -339,25 +427,32 @@ end-to-end tests green. Each layer therefore has its own pin:
   "search failed" text; `"2025-04-25T00:00:00+00:00"` accepted and normalised;
   `{}` and omitted filters mean no filters.
 - HTTP (`/api/search` and `/api/search/stream`): unknown key → 422; bad date →
-  422; `tag_ids: []` → 200, unscoped.
+  422; `tag_ids: []` → 422; filters without a `tag_ids` key → 200.
+- SPA (vitest, beside the existing `web/src/api/client.test.ts` and
+  `web/src/api/client/searchStream.test.ts`): `toSearchRequestBody()` drops an
+  empty `tag_ids` and keeps a non-empty one; `search()` and `streamSearch()`
+  each send a body with no `tag_ids` key for an untagged search, asserted on the
+  mocked `fetch` body.
 - Result shape: `tag_ids` present on `semantic_search` / `deep_search` sources
-  and `keyword_search` documents; `()` for a pruned row.
+  and `keyword_search` documents; `None` (JSON `null`) for a pruned row.
 
 ### Mutations — to be run, not yet run
 
 Each must turn a test red; recorded only after it has been run: (1) choke point removed from `_run_passes()`; (2) twin
 filters back to `_EMPTY_FILTERS`; (3) broaden back to `ui_filters=None`;
-(4) `_refine()` resolving with `ui_filters=None` (an L3 unit test asserting the
-re-plan's resolved specs carry the scope must go red); (5) D9 skip removed; (6) `extra="forbid"` removed; (7) date validator
-removed; (8) MCP empty-`tag_ids` check removed; (9) filter conversion moved back
+(4) `_refine()` resolving with `ui_filters=None` (the L3 unit test reading the
+`refine` phase detail's `new_specs[*].filters` must go red); (5) D9 skip removed; (6) `extra="forbid"` removed; (7) date validator
+removed; (8) the `FilterRequest` empty-`tag_ids` validator removed (MCP and HTTP tests
+go red); (9) filter conversion moved back
 inside the `try`; (10) choke point **and** each site reverted together → the
-end-to-end table goes red.
+end-to-end table goes red; (11) `toSearchRequestBody()` returning
+`JSON.stringify(body)` unchanged → the SPA tests go red.
 
 ### Gates
 
 `.claude/GATES.md` — `python-tests`, `python-types`, `python-lint`,
-`python-security` must be green. No `web/` change is planned, so the web gates
-are expected unaffected; they run anyway.
+`python-security` must be green, and — since D11 changes `web/src/api/client/`
+— the five `web-*` gates too.
 
 ## Docs (D8)
 
@@ -392,9 +487,18 @@ the in-process result cache (L10), which may hold pre-fix answers.
   fork carries the divergence in `retriever.py`, `core.py`, the wire model and
   the doc.
 - **Any-of tag semantics** — new scope (a new filter field); AND stays (D6).
+- **Rejecting empty `tag_ids` on MCP only, accepting `[]` on HTTP as "no tag
+  constraint"** — the round-0 rule, rejected at spec gate round 1 (D11). Its
+  only argument was that the SPA always sends `[]`; it left programmatic
+  API-key callers of `/api/search` fail-open on the Origin's exact scenario.
+  Changing the SPA's request builder removes the constraint instead.
+- **Omitting empty `tag_ids` in `paramsToFilters()` / making
+  `FilterRequest.tag_ids` optional in TS** — rejected: that `FilterRequest` is
+  UI state read as a required array by `FilterControls`,
+  `ActiveFiltersStrip` and `features/search/filters.ts`; the omission belongs
+  at the wire serialiser (`toSearchRequestBody()`), not in the UI model.
 - Also rejected, with reasons where decided: per-site fix without a choke point
-  (D2), old semantics kept for the web UI (D7), empty-`tag_ids` rejection on HTTP
-  (*Boundary validation*).
+  (D2), old semantics kept for the web UI (D7).
 
 ## Risks
 
@@ -406,22 +510,58 @@ the in-process result cache (L10), which may hold pre-fix answers.
   broaden.
 - **Broaden-and-retry nearly retired** (D9 consequence) — reachable only when
   the twin cap truncated; planner-guess recovery now relies on the twins.
-- **Clients sending unknown keys or non-ISO dates now fail loudly** — intended;
-  the SPA is unaffected (evidence above).
+- **Clients sending unknown keys, non-ISO dates or an empty `tag_ids` now fail
+  loudly** — intended; the SPA is unaffected once it omits an empty `tag_ids`
+  (D11). The SPA ships in the same image (the `Dockerfile` frontend stage builds
+  `web/dist`), so backend and SPA deploy together; only a browser tab still
+  running the pre-deploy bundle 422s an untagged search, until it reloads.
 - **Upstream merge conflicts** in touched files; the choke point stops a merge
   silently reopening the leak.
 - **Over-ceiling files.** `retriever.py` (945 lines) and `core.py` (2133) already
   exceed the 500-line ceiling; touched functions stay within §3.1.
-- **Pre-existing defect, reported not fixed:** `_retrieve_with_broaden()` returns
-  a 3-tuple (CODE_GUIDELINES §5.8); this change adds a parameter, not a value.
 
-## Verification evidence (commands run while writing, on `86ab49f`)
+## Verification evidence (re-run at spec gate round 1, on `994f3b3`)
 
-`rg -n "def \|_EMPTY_FILTERS" src/search/retriever.py`;
-`rg -n "resolve_specs\|_retrieve_with_broaden\|ui_filters=None" src/search/core.py`;
-`rg -n "filters\|FilterRequest" src/search/mcp_server.py` + read of `_run_tool()`;
-`rg -n "date_from|tag_ids" web/src`; `rg -n 'type="date"' web/src/components/patterns/FilterControls/FilterControls.tsx`;
-`python3 -c 'datetime.fromisoformat(…)'` on `2025-04-25` (ok), a full timestamp
-(ok), `2025-04-25junk` (rejected), `20250425` (**accepted**); pydantic 2.13.5;
-`rg -n "\.retrieve\(" tests src`; `rg -n "broaden|twin|_EMPTY_FILTERS|ui_filters=None" tests`;
-`rg -c "\bIndexedDocument\(|\bDocumentSummary\(|\bSourceDocument\(" tests src`.
+`git diff --stat 86ab49f 994f3b3 -- src tests web` is empty, so every anchor
+verified on `86ab49f` above still holds. Each command below runs as written with
+ripgrep (`|` alternation), from the repository root; the trailing comment is
+what it printed. Kept in a fenced block, not a table, so no Markdown escaping
+alters the command.
+
+```sh
+rg -c "def |_EMPTY_FILTERS" src/search/retriever.py                          # 28
+rg -c "resolve_specs|_retrieve_with_broaden|ui_filters=None" src/search/core.py  # 10
+rg -c "filters|FilterRequest" src/search/mcp_server.py                       # 49 (plus a read of _run_tool())
+rg -n "date_from|tag_ids" web/src | wc -l                                    # 152
+rg -c 'type="date"' web/src/components/patterns/FilterControls/FilterControls.tsx  # 2
+rg -n "\.retrieve\(" tests src | wc -l                                       # 46
+rg -c "retriever\.retrieve\(" tests                                          # multispec 7, test_retriever 19, salary_april 1 = 27
+rg -n "broaden|twin|_EMPTY_FILTERS|ui_filters=None" tests | wc -l            # 99
+rg -c "\bIndexedDocument\(|\bDocumentSummary\(|\bSourceDocument\(" tests src  # 22 lines across 12 files
+rg -c "JSON.stringify\(body\)" web/src/api/client/search.ts web/src/api/client/searchStream.ts  # 1 and 1 (D11's two senders)
+rg -c "model_fields_set" src/search/wire/api_keys.py                         # 2 (precedent for the D11 validator)
+rg -c "require_api_scope" src/search/api.py                                  # 3 (search routes are API-key callable)
+rg -c "capped = tuple\(planned_specs\[:max_specs\]\)" src/search/planner.py  # 1 (planner cap, D9)
+rg -c "_BroadenOutcome|toSearchRequestBody" src web/src                      # no output, exit 1: both new names are free
+```
+
+`python -c 'datetime.fromisoformat(…)'` in the repo venv: `2025-04-25` ok,
+`2025-04-25T00:00:00+00:00` ok, `2025-04-25junk` rejected, `20250425`
+**accepted**. `pydantic.VERSION` → `2.13.5`.
+
+## Review rounds
+
+| Round | Scope | Verdict | Outcome |
+|---|---|---|---|
+| 1 | full | NO-SHIP 2 major 7 minor | resolved in the commit `docs(spec): resolve spec gate round 1` |
+
+Round 1 lesson-candidates:
+
+- Recorded verification commands must be copy-paste reproducible in the named
+  tool — a grep-BRE `\|` pasted into an `rg` record yields zero matches and a
+  record nobody can re-run.
+- A boundary decision justified by "the only client does X" must enumerate the
+  clients first; any `/api/*` endpoint behind `require_api_scope` has
+  programmatic API-key callers, not just the SPA.
+- A skip/short-circuit that avoids "pointless repeated work" must list the
+  incidental retries it also removes (here: the broaden's second embedding call).
