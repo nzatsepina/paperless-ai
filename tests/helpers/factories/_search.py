@@ -182,6 +182,7 @@ def make_source_document(
     paperless_url: str | None = None,
     score: float = 0.9,
     relevance_tier: RelevanceTier = "good",
+    tag_ids: tuple[int, ...] | None = None,
 ) -> SourceDocument:
     """Create a SourceDocument — one ranked source in a SearchResult.
 
@@ -202,6 +203,7 @@ def make_source_document(
         ),
         score=score,
         relevance_tier=relevance_tier,
+        tag_ids=tag_ids,
     )
 
 

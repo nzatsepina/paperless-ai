@@ -146,3 +146,23 @@ class TestSnippet:
         snippet = _snippet(long_text)
         assert snippet.endswith("…")
         assert len(snippet) <= 281  # 280 chars + the ellipsis
+
+
+# ---------------------------------------------------------------------------
+# tag_ids — a caller can verify its tag scope held (spec D4)
+# ---------------------------------------------------------------------------
+
+
+def test_source_carries_the_indexed_documents_tag_ids() -> None:
+    reader = _reader(make_indexed_document(document_id=7, tag_ids=(101, 102)))
+
+    sources = _assemble([make_retrieved_chunk(chunk_id=1, document_id=7)], reader)
+
+    assert sources[0].tag_ids == (101, 102)
+
+
+def test_source_of_a_pruned_row_reports_unknown_tag_ids() -> None:
+    """A row pruned mid-request: ``None`` (unknown), never ``()`` (no tags)."""
+    sources = _assemble([make_retrieved_chunk(chunk_id=1, document_id=7)], _reader())
+
+    assert sources[0].tag_ids is None
