@@ -27,6 +27,7 @@ from tests.helpers.llm import (
     needs_more_response_json,
     planner_response_json,
 )
+from tests.helpers.mocks import make_mock_embedding_client
 from tests.unit.search.conftest import build_search_core
 
 # Placeholder tenant tag — no real taxonomy id.
@@ -39,12 +40,6 @@ def _npower_facets() -> object:
             make_taxonomy_entry(kind="correspondent", entry_id=10, name="npower"),
         )
     )
-
-
-def _per_text_embedding_client() -> MagicMock:
-    client = MagicMock()
-    client.embed.side_effect = lambda texts: [[0.1] for _ in texts]
-    return client
 
 
 def _records(events: list) -> list[PhaseRecord]:
@@ -81,7 +76,7 @@ def test_refinement_specs_carry_the_caller_scope() -> None:
             ),
         ),
         store_reader=store_reader,
-        embedding_client=_per_text_embedding_client(),
+        embedding_client=make_mock_embedding_client(),
     )
     events: list = []
 
@@ -121,7 +116,7 @@ def test_broaden_resolves_the_broadened_plan_with_the_caller_scope() -> None:
             ],
         ),
         store_reader=store_reader,
-        embedding_client=_per_text_embedding_client(),
+        embedding_client=make_mock_embedding_client(),
     )
     spy = MagicMock(wraps=core._retriever.retrieve)
     core._retriever.retrieve = spy  # type: ignore[method-assign]
@@ -144,7 +139,7 @@ def test_scoped_search_with_an_empty_first_pass_does_not_repeat_it() -> None:
     store_reader.vector_search.return_value = []
     store_reader.keyword_search.return_value = []
     store_reader.get_documents.return_value = []
-    embedding_client = _per_text_embedding_client()
+    embedding_client = make_mock_embedding_client()
     core = build_search_core(
         settings=make_search_settings(),
         llm_client=ScriptedLLMClient(

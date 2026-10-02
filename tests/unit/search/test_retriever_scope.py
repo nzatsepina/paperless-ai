@@ -21,6 +21,7 @@ from tests.helpers.factories import (
     make_search_filters,
     make_search_settings,
 )
+from tests.helpers.mocks import make_mock_embedding_client
 
 # Placeholder tenant tags — no real taxonomy id.
 _TAG_A = 101
@@ -43,9 +44,9 @@ def _retriever() -> tuple[Retriever, MagicMock]:
     store_reader = MagicMock()
     store_reader.vector_search.return_value = [make_chunk_hit(chunk_id=1)]
     store_reader.keyword_search.return_value = [make_chunk_hit(chunk_id=2)]
-    embedding_client = MagicMock()
-    embedding_client.embed.side_effect = lambda texts: [[0.1] for _ in texts]
-    retriever = Retriever(make_search_settings(), store_reader, embedding_client)
+    retriever = Retriever(
+        make_search_settings(), store_reader, make_mock_embedding_client()
+    )
     return retriever, store_reader
 
 

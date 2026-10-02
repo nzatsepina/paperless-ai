@@ -30,6 +30,7 @@ from tests.helpers.llm import (
     answered_response_json,
     planner_response_json,
 )
+from tests.helpers.mocks import make_mock_embedding_client
 from tests.unit.search.conftest import build_search_core
 
 
@@ -365,13 +366,11 @@ class TestUiFilters:
         # One vector per text: a single canned vector would let zip() in
         # Retriever._run_passes drop every semantic spec after the first, hiding
         # an unscoped recall twin from the assertion below.
-        embedding_client = MagicMock()
-        embedding_client.embed.side_effect = lambda texts: [[0.1] for _ in texts]
         core = build_search_core(
             settings=make_search_settings(),
             llm_client=llm_client,
             store_reader=store_reader,
-            embedding_client=embedding_client,
+            embedding_client=make_mock_embedding_client(),
         )
         core.answer("a query", ui_filters=ui_filters)
 
