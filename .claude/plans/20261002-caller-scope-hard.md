@@ -120,7 +120,7 @@ Expected: `SEARCH_AT <worktree>/src/search/__init__.py`. **Anything under `site-
 - [ ] **Step 3: Install the SPA dependencies**
 
 ```bash
-cd web && npm ci && cd ..
+(cd web && npm ci)
 ```
 
 - [ ] **Step 4: Baseline the Python suite**
@@ -1212,7 +1212,7 @@ source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/ac
 python -m pytest tests/unit/search/test_resolve_specs_scope.py tests/unit/search/test_core_scope.py tests/unit/search/test_core_sources.py tests/unit/search/test_resolve_specs.py
 ```
 
-Expected: 5 FAIL — the four `test_resolve_specs_scope.py` tests (twins carry no tag) and `test_refinement_specs_carry_the_caller_scope` (`new_specs` has 2 entries but the twin's `tag_ids` is `[]`). `TestUiFilters` already passes here, because A1's choke point scopes the twin at the store; its red run belongs to the pre-change code (Step 4 below shows how to see it). The existing twin tests in `test_resolve_specs.py` (`ui_filters=None`) pass — R2/R6.
+Expected: 5 FAIL — the four `test_resolve_specs_scope.py` tests (twins carry no tag) and `test_refinement_specs_carry_the_caller_scope` (`new_specs` has 2 entries but the twin's `tag_ids` is `[]`). `TestUiFilters` already passes here, because A1's choke point scopes the twin at the store; its red run belongs to the pre-change code (Step 6 below shows how to see it). The existing twin tests in `test_resolve_specs.py` (`ui_filters=None`) pass — R2/R6.
 
 - [ ] **Step 3: Implement the site fix**
 
@@ -3570,7 +3570,7 @@ Built on a shallow copy — `body` and `body.filters` are live UI state and are 
 - [ ] **Step 0: Install this worktree's SPA dependencies** (each worktree has its own `web/node_modules`; Task 0's install does not reach the track worktree)
 
 ```bash
-cd web && npm ci && cd ..
+(cd web && npm ci)
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -3679,7 +3679,7 @@ with:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd web && npx vitest run src/api/client/search.test.ts src/api/client/searchStream.test.ts; cd ..
+(cd web && npx vitest run src/api/client/search.test.ts src/api/client/searchStream.test.ts)
 ```
 
 Expected: FAIL — `search.test.ts` cannot import `toSearchRequestBody`; the new `streamSearch` test sees `filters: { tag_ids: [] }` in the posted body.
@@ -3789,7 +3789,7 @@ with:
 - [ ] **Step 4: Run the web gates this track can turn red**
 
 ```bash
-cd web && npm run typecheck && npm run lint && npm run test:coverage && npm run build; cd ..
+(cd web && npm run typecheck && npm run lint && npm run test:coverage && npm run build)
 ```
 
 Expected: all exit 0; coverage stays above the 91/83/91/91 floor (measured on the plan's dry run: 93.04 / 85.32 / 93.75 / 93.85).
@@ -3810,6 +3810,7 @@ git commit -m "fix(web): omit an empty tag_ids from search request bodies"
 **Files:**
 - Modify: `docs/search-pipeline.md` — human doc; the edits below are the ones D8 authorises, nothing else
 - Modify: `.claude/DECISIONS.md` (append)
+- Out of scope, not edited: `docs/search.md` — human doc, outside D8, so not authorised. It states the old contract (**Filters.**: "Unknown keys are ignored") and its `keyword_search` output field list lacks `tag_ids` (D4). Step 4 records both for the PR body instead.
 
 **Interfaces:** none (prose). Anchors are the doc's own headings and the flowchart node id `T6`.
 
@@ -3965,7 +3966,11 @@ rg -n "Recall twins \(planner guesses only\)|Caller filters are a hard scope" do
 
 The names the entry cites (`_StrictFastMCP`, `Retriever.retrieve(specs, *, scope)`) exist only once the tracks merge; Task I1 greps them.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Record the stale human doc for the PR body (no edit)**
+
+Do not edit `docs/search.md`. Report to the orchestrator, by file and anchor, for the PR body's "human docs to update" section: (1) `docs/search.md`, Tool reference, **Filters.** — the sentence "Unknown keys are ignored" is now false (an unknown key is a tool error over MCP and a 422 over HTTP); (2) the same section's `keyword_search` output field list `{ documents: [{ document_id, title, correspondent, document_type, created, snippet, paperless_url }] … }` lacks the new `tag_ids` (D4). Both are left stale pending a human-authorised edit; the review-team gate has this recorded disposition.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add docs/search-pipeline.md .claude/DECISIONS.md
@@ -4226,6 +4231,7 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 |---|---|---|---|
 | 1 | full | NO-SHIP 1 major 9 minor | resolved in `80bfbcc` and this commit |
 | 2 | incremental | NO-SHIP 1 major 2 minor | resolved in this commit |
+| 3 | full certify | NO-SHIP 1 major 2 minor | resolved in this commit |
 
 Round 1 resolution notes:
 
@@ -4250,3 +4256,13 @@ Round 2 lesson-candidates:
 - A ceiling-avoidance claim states its counting convention and checks it against the guideline's literal exclusion list; a convention the guideline does not state is an interpretation, flagged as one.
 - Code moved to satisfy one rule is re-checked against its neighbours: hoisting strings to module constants triggers §3.5's placement rule.
 - A type-tightening pass also checks shape rules (§5.8 three-element tuples), not just annotations.
+
+Round 3 resolution notes:
+
+- R3-F1 -> Task E1 names `docs/search.md` as out of scope (human doc, outside D8) and gains Step 4, which records the stale "Unknown keys are ignored" sentence and the `keyword_search` output field list (no `tag_ids`) for the PR body; no edit to `docs/search.md` is planned. R3-F2 -> every `; cd ..` block is now a subshell `(cd web && ...)` (D1 Steps 2 and 4; the `npm ci` lines too). R3-F3 -> A2 Step 2 points at Step 6.
+
+Round 3 lesson-candidates:
+
+- A change to a contract sweeps every human doc that states the old contract, not only the doc the spec authorised; the plan names any out-of-authority doc and routes it to the PR body.
+- `cd X && ...; cd ..` returns the exit status of `cd ..`; any block whose exit code is the pass signal uses the subshell form `(cd X && ...)`.
+- When steps are renumbered, grep the plan for "Step N" cross-references.
