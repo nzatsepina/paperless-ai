@@ -105,10 +105,13 @@ caller-supplied filters only.
   twins keep the caller scope, every twin equals what `broaden_plan()` + scope
   resolves to, so the broadened searches are a subset of pass 1 whenever every
   twin ran. Broaden-and-retry then fires **only when `max_specs` truncated the
-  twins** — that is, when the resolved pass-1 specs already number at least
-  `SEARCH_PLANNER_MAX_SPECS`, so `_append_unfiltered_twins()` breaks on
-  `len(out) >= max_specs` before appending any twin, and at least one of them
-  resolved to a real planner filter. (The planner itself caps the plan at
+  twins** — that is, whenever `_append_unfiltered_twins()` hit the cap before
+  every filtered spec got its twin (`len(resolved)` plus the number of filtered
+  specs exceeds `max_specs`; the loop appends a twin, then re-checks
+  `len(out) >= max_specs`, so partial truncation also counts). The simplest
+  case, used by the tests, is a plan already at `max_specs`, where no twin is
+  appended at all; at least one spec must have resolved to a real planner
+  filter. (The planner itself caps the plan at
   `max_specs` — `capped = tuple(planned_specs[:max_specs])` in
   `src/search/planner.py` — so "more specs than the cap" never reaches
   `resolve_specs()`.) D9 nearly retires broaden; it is kept, not deleted, because
@@ -270,7 +273,9 @@ every check holds identically on MCP and HTTP.
   `POST /api/search/stream`, used by `useStreamingSearch`). One new exported
   function in `web/src/api/client/search.ts` — `toSearchRequestBody(body:
   SearchRequest): string` — serialises the body with `filters.tag_ids` removed
-  when it is empty; both senders call it instead of `JSON.stringify(body)`.
+  when it is empty. It returns a new string built from a shallow copy — `body`
+  and `body.filters` are never mutated, because `filters` is live UI state read
+  elsewhere as a required array; both senders call it instead of `JSON.stringify(body)`.
   A `filters` of `null` or absent (`SearchRequest.filters` is optional) passes
   through unchanged — `searchStream.test.ts` already asserts a posted
   `filters: null` body and stays green unmodified.
@@ -445,9 +450,12 @@ end-to-end tests green. Each layer therefore has its own pin:
   `web/src/api/client/searchStream.test.ts`): `toSearchRequestBody()` drops an
   empty `tag_ids` and keeps a non-empty one; `search()` and `streamSearch()`
   each send a body with no `tag_ids` key for an untagged search, asserted on the
-  mocked `fetch` body.
+  mocked `fetch` body; the input object is unchanged after `toSearchRequestBody()`
+  runs (no `delete` on shared filter state).
 - Result shape: `tag_ids` present on `semantic_search` / `deep_search` sources
-  and `keyword_search` documents; `None` (JSON `null`) for a pruned row.
+  and `keyword_search` documents; `None` (JSON `null`) for a pruned row —
+  sources only (`SourceDocument.tag_ids`); `keyword_search` documents
+  (`DocumentSummary.tag_ids`) are required and always carry a list.
 
 ### Mutations — to be run, not yet run
 
@@ -567,7 +575,8 @@ rg -c "_BroadenOutcome|toSearchRequestBody" src web/src                      # n
 
 | Round | Scope | Verdict | Outcome |
 |---|---|---|---|
-| 1 | full | NO-SHIP 2 major 7 minor | resolved in the commit `docs(spec): resolve spec gate round 1` |
+| 1 | full | NO-SHIP 2 major 7 minor | resolved in commits `46e2570` and `57e10aa` (both `docs(spec): resolve spec gate round 1`) |
+| 2 | incremental | SHIP 0 major 4 minor | minors resolved in this commit |
 
 Round 1 lesson-candidates:
 
@@ -579,3 +588,12 @@ Round 1 lesson-candidates:
   programmatic API-key callers, not just the SPA.
 - A skip/short-circuit that avoids "pointless repeated work" must list the
   incidental retries it also removes (here: the broaden's second embedding call).
+
+Round 2 lesson-candidates:
+
+- A condition stated as "that is, when X" in a binding decision must be the
+  exact trigger, not the simplest instance of it.
+- A serialiser that drops a key from a shared state object must say whether it
+  copies; in an SPA the input is live state read elsewhere as a required field.
+- A round footer that names a commit by subject must cite the sha; gate rounds
+  routinely produce two commits with the same subject.
