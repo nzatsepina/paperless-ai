@@ -52,6 +52,10 @@ def _client_and_headers() -> _ApiHarness:
         {"query": "boiler", "filters": {"date_to": "9999-12-31"}},
         {"query": "boiler", "filters": {"correspondent_id": 2**63}},
         {"query": "boiler", "filters": {"tag_ids": [2**64]}},
+        {"query": "boiler", "filters": {"tag_ids": [True]}},
+        {"query": "boiler", "filters": {"tag_ids": ["5"]}},
+        {"query": "boiler", "filters": {"correspondent_id": 0}},
+        {"query": "boiler", "filters": {"document_type_id": -1}},
         {"query": "boiler", "filters": {"tag_ids": []}},
     ],
 )

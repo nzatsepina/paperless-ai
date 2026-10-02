@@ -41,6 +41,10 @@ _MALFORMED_FILTERS = [
     ({"date_to": "9999-12-31"}, "date_to"),
     ({"correspondent_id": 2**63}, "correspondent_id"),
     ({"tag_ids": [2**64]}, "tag_ids"),
+    ({"tag_ids": [True]}, "tag_ids"),
+    ({"tag_ids": ["5"]}, "tag_ids"),
+    ({"correspondent_id": 0}, "correspondent_id"),
+    ({"document_type_id": -1}, "document_type_id"),
 ]
 
 
@@ -198,6 +202,9 @@ async def test_filters_sent_as_a_json_string_are_parsed_then_validated() -> None
         typo = await client.call_tool(
             "semantic_search", {"query": "boiler", "filters": '{"tag_id": 7}'}
         )
+        string_id = await client.call_tool(
+            "semantic_search", {"query": "boiler", "filters": '{"tag_ids": ["7"]}'}
+        )
 
     assert scoped.isError is False
     ui_filters = _ui_filters(core, "retrieve")
@@ -205,6 +212,8 @@ async def test_filters_sent_as_a_json_string_are_parsed_then_validated() -> None
     assert ui_filters.tag_ids == (7,)
     assert typo.isError is True
     assert "tag_id" in _text(typo)
+    assert string_id.isError is True
+    assert "tag_ids" in _text(string_id)
     assert core.retrieve.call_count == 1
 
 
