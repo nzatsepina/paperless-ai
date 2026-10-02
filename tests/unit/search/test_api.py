@@ -39,7 +39,8 @@ from tests.helpers.factories import (
     make_source_document,
     make_taxonomy_entry,
 )
-from tests.helpers.search import mint_api_key
+from tests.helpers.search import bearer_headers as _bearer_headers
+from tests.helpers.search import seed_api_key as _seed_api_key
 from tests.unit.search.conftest import build_test_client
 
 # ---------------------------------------------------------------------------
@@ -52,36 +53,6 @@ def _settings(
 ) -> MagicMock:
     """Build a Settings-like mock for API tests, with a chosen index DB path."""
     return make_search_settings(INDEX_DB_PATH=db_path, **overrides)
-
-
-def _seed_api_key(settings: MagicMock) -> str:
-    """Seed a user and an API key in the app.db at *settings.APP_DB_PATH*.
-
-    Returns the raw key string for use as a Bearer token. The app.db is
-    already migrated by ``create_app`` inside ``build_test_client``, so this
-    function opens a second connection to the same file to insert the seed
-    rows — the established per-request connection pattern.
-    """
-    from appdb.connection import connect
-    from appdb.passwords import hash_password
-    from appdb.users import create as create_user
-
-    conn = connect(settings.APP_DB_PATH)
-    try:
-        user = create_user(
-            conn,
-            username="api-user",
-            password_hash=hash_password("pw"),
-            role="member",
-        )
-        return mint_api_key(conn, owner_user_id=user.id, scopes="api")
-    finally:
-        conn.close()
-
-
-def _bearer_headers(raw_key: str) -> dict[str, str]:
-    """Return an Authorization header carrying *raw_key* as a Bearer token."""
-    return {"Authorization": f"Bearer {raw_key}"}
 
 
 def _seeded_facets() -> object:

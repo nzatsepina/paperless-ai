@@ -116,6 +116,34 @@ def mint_api_key(
     return raw
 
 
+def seed_api_key(settings: Any) -> str:
+    """Seed a member user and an ``api``-scoped key in the app.db; return the raw key.
+
+    Opens a second connection to ``settings.APP_DB_PATH`` (already migrated by
+    ``create_app``) to insert the rows — the per-request connection pattern.
+    """
+    from appdb.connection import connect
+    from appdb.passwords import hash_password
+    from appdb.users import create as create_user
+
+    conn = connect(settings.APP_DB_PATH)
+    try:
+        user = create_user(
+            conn,
+            username="api-user",
+            password_hash=hash_password("pw"),
+            role="member",
+        )
+        return mint_api_key(conn, owner_user_id=user.id, scopes="api")
+    finally:
+        conn.close()
+
+
+def bearer_headers(raw_key: str) -> dict[str, str]:
+    """Return an Authorization header carrying *raw_key* as a Bearer token."""
+    return {"Authorization": f"Bearer {raw_key}"}
+
+
 def seed_user_and_login(
     app_db: object,
     client: object,

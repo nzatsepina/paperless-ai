@@ -44,7 +44,9 @@ from tests.helpers.llm import (
     answered_response_json,
     planner_response_json,
 )
-from tests.helpers.search import build_search_core, mint_api_key
+from tests.helpers.search import bearer_headers as _bearer
+from tests.helpers.search import build_search_core
+from tests.helpers.search import seed_api_key as _seed_api_key
 
 # ---------------------------------------------------------------------------
 # Embedding geometry
@@ -64,30 +66,6 @@ def _make_settings(tmp_path: Path) -> MagicMock:
         INDEX_DB_PATH=str(tmp_path / "index.db"),
         EMBEDDING_DIMENSIONS=_DIMENSIONS,
     )
-
-
-def _seed_api_key(settings: MagicMock) -> str:
-    """Seed a user and an API key in app.db; return the raw key string.
-
-    Called after ``create_app`` has migrated app.db at ``settings.APP_DB_PATH``.
-    Opens a second connection to the same file to insert seed rows — the
-    per-request connection pattern.
-    """
-    from appdb.connection import connect
-    from appdb.passwords import hash_password
-    from appdb.users import create as create_user
-
-    conn = connect(settings.APP_DB_PATH)
-    try:
-        user = create_user(
-            conn,
-            username="api-user",
-            password_hash=hash_password("pw"),
-            role="member",
-        )
-        return mint_api_key(conn, owner_user_id=user.id, scopes="api")
-    finally:
-        conn.close()
 
 
 def _seed_store(settings: MagicMock) -> None:
@@ -163,10 +141,6 @@ def _build_client(settings: MagicMock, store_reader: StoreReader) -> TestClient:
     core = _make_mock_core()
     app = create_app(settings, core=core, store_reader=store_reader)
     return TestClient(app, raise_server_exceptions=False, base_url="https://testserver")
-
-
-def _bearer(raw_key: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {raw_key}"}
 
 
 # ---------------------------------------------------------------------------

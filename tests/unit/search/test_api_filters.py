@@ -16,11 +16,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from appdb.connection import connect
-from appdb.passwords import hash_password
-from appdb.users import create as create_user
 from tests.helpers.factories import make_search_result, make_search_settings
-from tests.helpers.search import mint_api_key
+from tests.helpers.search import bearer_headers, seed_api_key
 from tests.unit.search.conftest import build_test_client
 
 _ENDPOINTS = ["/api/search", "/api/search/stream"]
@@ -39,15 +36,8 @@ def _client_and_headers() -> _ApiHarness:
     core = MagicMock()
     core.answer.return_value = make_search_result()
     client = build_test_client(settings, core=core)
-    conn = connect(settings.APP_DB_PATH)
-    try:
-        user = create_user(
-            conn, username="api-user", password_hash=hash_password("pw"), role="member"
-        )
-        raw_key = mint_api_key(conn, owner_user_id=user.id, scopes="api")
-    finally:
-        conn.close()
-    return _ApiHarness(client, {"Authorization": f"Bearer {raw_key}"}, core)
+    raw_key = seed_api_key(settings)
+    return _ApiHarness(client, bearer_headers(raw_key), core)
 
 
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
