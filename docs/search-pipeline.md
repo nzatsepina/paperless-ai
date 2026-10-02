@@ -416,7 +416,8 @@ planner filter: a caller that keeps tenants apart by tag relies on that filter,
 and silently broadening past it returned other tenants' documents.
 
 If every broadened search already ran in pass 1 — always true for a scoped
-`semantic_search`, whose twins already ran the scope-only searches — the retry
+`semantic_search`, whose pass-1 specs already are the scope-only searches (each
+twin collapses into its original) — the retry
 would repeat pass 1, so it is skipped and the trace reports
 `broadened: false`.  In practice broaden now fires only when
 `SEARCH_PLANNER_MAX_SPECS` cut off a twin.  The retry fires once per query,
