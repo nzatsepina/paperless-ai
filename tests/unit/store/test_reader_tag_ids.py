@@ -9,10 +9,13 @@ document 2 carries tag 102.
 
 from __future__ import annotations
 
-from store.models import ChunkInput, DocumentBrowseQuery, DocumentMeta
-from tests.helpers.factories import make_search_filters
+from store.models import DocumentBrowseQuery
+from tests.helpers.factories import (
+    make_chunk_input,
+    make_document_meta,
+    make_search_filters,
+)
 from tests.helpers.store import open_reader, open_writer
-from tests.unit.store.conftest import unit_vec
 
 # A tag id the taxonomy does not name — placeholder, no real taxonomy id.
 _UNNAMED_TAG = 999
@@ -84,25 +87,8 @@ def test_a_tag_id_missing_from_the_taxonomy_is_still_reported(
     writer = open_writer(populated_db)
     try:
         writer.upsert_document(
-            DocumentMeta(
-                id=3,
-                title="Unnamed tag",
-                correspondent_id=None,
-                document_type_id=None,
-                tag_ids=(_UNNAMED_TAG,),
-                created="2024-07-01T00:00:00+00:00",
-                modified="2024-07-01T00:00:00+00:00",
-                content_hash="hash3",
-                page_count=1,
-            ),
-            [
-                ChunkInput(
-                    chunk_index=0,
-                    text="untagged",
-                    page_hint=1,
-                    embedding=unit_vec(4, 0),
-                )
-            ],
+            make_document_meta(id=3, tag_ids=(_UNNAMED_TAG,), content_hash="hash3"),
+            [make_chunk_input(dimensions=4)],
         )
     finally:
         writer.close()
