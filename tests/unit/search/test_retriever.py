@@ -116,7 +116,9 @@ def test_rrf_fusion_hand_computed_two_lists() -> None:
     ]
     embedding_client.embed.return_value = [[0.1, 0.2, 0.3]]
 
-    chunks, _ = retriever.retrieve((_semantic("find me something"), _keyword("term")))
+    chunks, _ = retriever.retrieve(
+        (_semantic("find me something"), _keyword("term")), scope=None
+    )
 
     score_by_chunk = {chunk.chunk_id: chunk.rrf_score for chunk in chunks}
     expected_chunk1 = 1 / (60 + 1)
@@ -140,7 +142,7 @@ def test_chunk_in_multiple_lists_ranks_above_single_list() -> None:
     ]
     embedding_client.embed.return_value = [[0.1, 0.2]]
 
-    chunks, _ = retriever.retrieve((_semantic("query"), _keyword("term")))
+    chunks, _ = retriever.retrieve((_semantic("query"), _keyword("term")), scope=None)
 
     score_by_chunk = {chunk.chunk_id: chunk.rrf_score for chunk in chunks}
     # chunk 2 is in both lists; chunk 1 is only in the vector list.
@@ -160,7 +162,7 @@ def test_retrieve_empty_when_all_ranked_lists_are_empty() -> None:
     embedding_client.embed.return_value = [[0.0, 0.0]]
 
     chunks, signal = retriever.retrieve(
-        (_semantic("obscure query"), _keyword("unknown"))
+        (_semantic("obscure query"), _keyword("unknown")), scope=None
     )
 
     assert chunks == []
@@ -180,7 +182,7 @@ def test_retrieve_embeds_all_semantic_specs_in_one_batch() -> None:
     store_reader.keyword_search.return_value = []
     embedding_client.embed.return_value = [[0.1], [0.2]]
 
-    retriever.retrieve((_semantic("main query"), _semantic("second query")))
+    retriever.retrieve((_semantic("main query"), _semantic("second query")), scope=None)
 
     embedding_client.embed.assert_called_once()
     texts_embedded = embedding_client.embed.call_args[0][0]
@@ -219,7 +221,7 @@ class TestRetrieveEmbeddingFailure:
         embedding_client.embed.side_effect = EmbeddingError("bad API key")
 
         # Must NOT raise.
-        chunks, signal = retriever.retrieve((_semantic("a query"),))
+        chunks, signal = retriever.retrieve((_semantic("a query"),), scope=None)
 
         assert chunks == []
         assert signal.best_vector_similarity is None
@@ -231,7 +233,7 @@ class TestRetrieveEmbeddingFailure:
         retriever, store_reader, embedding_client = _retriever(top_k=10)
         embedding_client.embed.side_effect = _retryable_openai_error()
 
-        chunks, _ = retriever.retrieve((_semantic("a query"),))
+        chunks, _ = retriever.retrieve((_semantic("a query"),), scope=None)
 
         assert chunks == []
 
@@ -243,7 +245,9 @@ class TestRetrieveEmbeddingFailure:
             make_chunk_hit(chunk_id=1, document_id=10),
         ]
 
-        chunks, _ = retriever.retrieve((_semantic("a query"), _keyword("term")))
+        chunks, _ = retriever.retrieve(
+            (_semantic("a query"), _keyword("term")), scope=None
+        )
 
         # The keyword hit survives even though vector embedding failed.
         assert {chunk.chunk_id for chunk in chunks} == {1}
@@ -271,7 +275,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        result = retriever.retrieve((_semantic("q"),))
+        result = retriever.retrieve((_semantic("q"),), scope=None)
 
         assert isinstance(result, tuple)
         assert len(result) == 2
@@ -288,7 +292,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("query"),))
+        _, signal = retriever.retrieve((_semantic("query"),), scope=None)
 
         assert signal.best_vector_similarity == pytest.approx(1.0 / (1.0 + 0.2))
 
@@ -304,7 +308,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("query"),))
+        _, signal = retriever.retrieve((_semantic("query"),), scope=None)
 
         assert signal.best_vector_similarity == pytest.approx(1.0 / (1.0 + 0.1))
 
@@ -322,7 +326,7 @@ class TestRetrievalSignal:
             [make_chunk_hit(chunk_id=2, document_id=2, score=0.05)],
         ]
 
-        _, signal = retriever.retrieve((_semantic("q1"), _semantic("q2")))
+        _, signal = retriever.retrieve((_semantic("q1"), _semantic("q2")), scope=None)
 
         assert signal.best_vector_similarity == pytest.approx(1.0 / (1.0 + 0.05))
 
@@ -335,7 +339,9 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("query"), _keyword("term")))
+        _, signal = retriever.retrieve(
+            (_semantic("query"), _keyword("term")), scope=None
+        )
 
         assert signal.best_vector_similarity is None
 
@@ -349,7 +355,7 @@ class TestRetrievalSignal:
             make_chunk_hit(chunk_id=1, document_id=1),
         ]
 
-        _, signal = retriever.retrieve((_keyword("term"),))
+        _, signal = retriever.retrieve((_keyword("term"),), scope=None)
 
         assert signal.best_vector_similarity is None
         embedding_client.embed.assert_not_called()
@@ -362,7 +368,7 @@ class TestRetrievalSignal:
             make_chunk_hit(chunk_id=1, document_id=1),
         ]
 
-        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")))
+        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")), scope=None)
 
         assert signal.best_vector_similarity is None
 
@@ -375,7 +381,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")))
+        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")), scope=None)
 
         assert signal.has_keyword_hit is True
 
@@ -388,7 +394,7 @@ class TestRetrievalSignal:
         store_reader.keyword_search.return_value = []
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")))
+        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")), scope=None)
 
         assert signal.has_keyword_hit is False
 
@@ -403,7 +409,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("q"),))
+        _, signal = retriever.retrieve((_semantic("q"),), scope=None)
 
         assert signal.has_keyword_hit is False
         store_reader.keyword_search.assert_not_called()
@@ -419,7 +425,7 @@ class TestRetrievalSignal:
         ]
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")))
+        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")), scope=None)
 
         assert signal.best_vector_similarity == pytest.approx(1.0 / (1.0 + 0.15))
         assert signal.has_keyword_hit is True
@@ -431,7 +437,7 @@ class TestRetrievalSignal:
         store_reader.keyword_search.return_value = []
         embedding_client.embed.return_value = [[0.1]]
 
-        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")))
+        _, signal = retriever.retrieve((_semantic("q"), _keyword("term")), scope=None)
 
         assert signal.best_vector_similarity is None
         assert signal.has_keyword_hit is False

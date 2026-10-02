@@ -362,21 +362,26 @@ class TestUiFilters:
             document_type_id=None,
             tag_ids=(),
         )
+        # One vector per text: a single canned vector would let zip() in
+        # Retriever._run_passes drop every semantic spec after the first, hiding
+        # an unscoped recall twin from the assertion below.
+        embedding_client = MagicMock()
+        embedding_client.embed.side_effect = lambda texts: [[0.1] for _ in texts]
         core = build_search_core(
             settings=make_search_settings(),
             llm_client=llm_client,
             store_reader=store_reader,
-            embedding_client=_embedding_client(),
+            embedding_client=embedding_client,
         )
         core.answer("a query", ui_filters=ui_filters)
 
-        # The UI filters are the authoritative global constraint: a spec guess
-        # that does not resolve (the empty test taxonomy drops "npower") leaves
-        # the UI's correspondent_id=55 as the only filter reaching vector_search.
-        # resolve_specs intersects per spec, so the object is rebuilt but its
-        # values equal the UI filters exactly.
-        passed_filters = store_reader.vector_search.call_args[0][2]
-        assert passed_filters == ui_filters
+        # The caller's filters are a hard scope: a spec guess that does not
+        # resolve (the empty test taxonomy drops "npower") leaves
+        # correspondent_id=55 as the only filter, and EVERY vector pass —
+        # recall twins included — carries it.
+        calls = store_reader.vector_search.call_args_list
+        assert calls
+        assert all(call.args[2] == ui_filters for call in calls)
 
 
 # ---------------------------------------------------------------------------
