@@ -22,8 +22,8 @@
 - **D9:** skip a broaden whose searches (`_spec_search_key()` set) are all in pass 1's; skip branch returns `_BroadenOutcome(chunks=[], signal=<pass-1 signal>, broadened=False)`.
 - **§5.8:** `_retrieve_with_broaden()` returns the frozen `_BroadenOutcome` dataclass, not a 3-tuple.
 - **§3.1 — all three limits (file lines, function executable body lines, imported names) on every touched file, tests included** (spec Risks: the file headers *and* "touched functions stay within §3.1"). No splits — a split would move unrelated code and widen the diff past the leak fix; every exception is §3.1's own `# rationale:` carve-out:
-  - **File headers** (over 500 lines, no header today): `src/search/mcp_server.py` (B2 — its header also covers the 30-name import cap, which B2 takes from 40 to 45 names), `src/store/reader/_lookups.py` (C1), `src/search/models.py` (C2); and the four over-ceiling test files this change grows — `tests/unit/search/test_core.py`, `tests/unit/search/test_core_trace.py` (A3), `tests/helpers/factories/_search.py`, `tests/unit/search/test_document_routes.py` (C1). `src/search/core.py`'s existing header covers its length only; A1 extends it to its import count (66 names, unchanged by this change).
-  - **Touched functions over the 60-line ceiling** get a `# rationale:` immediately above the `def`, stating why the function stays whole in this change: `SearchCore._refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1). Every other function this plan edits stays at or under 60 executable body lines (measured on the merged replay). Over-limit functions in touched files that this plan does **not** edit (`SearchCore._answer_uncached()`, `to_search_response()`, `list_filters_with_counts()`) are outside the spec's "touched functions" clause and are left as they are.
+  - **File headers** (over 500 lines, no header today): `src/search/mcp_server.py` (B2 — its header also covers the 30-name import cap: the module already imports 40 names, and B2 adds five — `Sequence`, `ToolError`, `ValidationError` and the type-only `ContentBlock` / `MCPTool` — for the strict server and the filter error, taking it to 45), `src/store/reader/_lookups.py` (C1), `src/search/models.py` (C2); and the four over-ceiling test files this change grows — `tests/unit/search/test_core.py`, `tests/unit/search/test_core_trace.py` (A3), `tests/helpers/factories/_search.py`, `tests/unit/search/test_document_routes.py` (C1). `src/search/core.py`'s existing header covers its length only; A1 extends it to its import count (66 names, unchanged by this change).
+  - **Touched functions over the 60-line ceiling** get a `# rationale:` immediately above the `def`, stating why the function stays whole in this change: `SearchCore._refine()` (A1), `list_documents()` (C1). Every other function this plan edits stays at or under 60 executable body lines (measured on the merged replay) — including `_register_search_tools()` (B2, then S1): the three tool descriptions B2 lengthens move to module-level constants (`_SEMANTIC_SEARCH_DESCRIPTION`, `_DEEP_SEARCH_DESCRIPTION`, `_KEYWORD_SEARCH_DESCRIPTION`), so the registrar stays under the ceiling (34 executable body lines on the merged replay, each nested tool closure counted as its own function; 57 on `ecaeb28`) instead of taking a carve-out. Over-limit functions in touched files that this plan does **not** edit (`SearchCore._answer_uncached()`, `to_search_response()`, `list_filters_with_counts()`) are outside the spec's "touched functions" clause and are left as they are.
 - **Tests encoding the old drop are re-targeted or inverted, never deleted** (GATES: a red gate is never greened by deletion).
 - **Public repository:** no host, container, domain, client, downstream project, real taxonomy id or person anywhere — every id in code, tests and prose is a placeholder (`101`, `202`, `"tenant-a"`).
 - **Every command block runs in the venv, in the worktree that owns the task.** Shell state does not persist between an agent's tool calls, so each block starts with `source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"` (run from that worktree's root). A tool resolved from anywhere else — above all `pip-audit` in G1, which would audit the wrong environment and pass silently — invalidates the result. `web/node_modules` is per checkout: every worktree that runs `npm`/`npx` installs it first (`cd web && npm ci`).
@@ -2214,7 +2214,7 @@ git commit -m "fix(search): reject malformed caller filters at the HTTP boundary
 
 **Files:**
 - Create: `tests/unit/search/test_mcp_server_filters.py`
-- Modify: `src/search/mcp_server.py` (module header + `# rationale:` covering length and the import cap, imports, `_to_search_filters()`, `_run_search_tool()`, new `_StrictFastMCP`, `# rationale:` above `_register_search_tools()`, `_dispatch()`, three tool descriptions, server `instructions`, `build_mcp_app()`)
+- Modify: `src/search/mcp_server.py` (module header + `# rationale:` covering length and the import cap, imports, `_to_search_filters()`, `_run_search_tool()`, new `_StrictFastMCP`, three tool-description constants, `_dispatch()`, the three tools' `description=` arguments, server `instructions`, `build_mcp_app()`)
 
 **Interfaces:**
 - Consumes: B1's `FilterRequest` validators.
@@ -2497,10 +2497,11 @@ with:
 # one FastMCP instance. The caller-scope change that last touched it is a leak
 # fix; splitting the module there would move unrelated code and widen that
 # diff past the fix (spec 20261002-caller-scope-hard, Risks). The imported
-# names exceed the §3.1 30-name cap for the same reason: this one boundary
-# wires session and API-key auth, the spend quota, the core, the store's
-# filter shape, the MCP SDK and the ASGI transport, so only that split would
-# lower the count.
+# names exceed the §3.1 30-name cap too: the module already imported 40, since
+# this one boundary wires session and API-key auth, the spend quota, the core,
+# the store's filter shape, the MCP SDK and the ASGI transport; the caller-scope
+# change adds five (Sequence, ToolError, ValidationError, ContentBlock, MCPTool)
+# for the strict server and the filter error. Only that split would lower it.
 """
 ```
 
@@ -2727,7 +2728,7 @@ class _McpApp:
     """Thin wrapper
 ```
 
-`_register_search_tools()` is over the §3.1 60-line ceiling and this task edits it (`_dispatch` and the descriptions live inside it), so it gets the function-level carve-out (spec Risks; no split in this change). In `src/search/mcp_server.py`, replace:
+The three descriptions this task lengthens move to module-level constants, so `_register_search_tools()` — whose tool decorators count as its own body lines — stays within the §3.1 60-line ceiling (34 executable body lines after S1, each nested tool closure counted as its own function) instead of needing a carve-out. The `list_filters` and `fetch_documents` descriptions are unchanged and stay inline. In `src/search/mcp_server.py`, replace:
 
 ```python
 def _register_search_tools(
@@ -2737,11 +2738,44 @@ def _register_search_tools(
 with:
 
 ```python
-# rationale: over the §3.1 60-line ceiling. The five tool closures must be
-# registered on the one FastMCP instance and share the per-request core
-# resolution, the spend-quota scaffold (_run_tool) and the filter dispatch
-# (_dispatch). This change moves the filter parse ahead of _run_tool; a split
-# would widen a leak-fix diff (spec 20261002-caller-scope-hard, Risks).
+# The descriptions of the three tools that take caller filters live here, not
+# inline in _register_search_tools, so the registrar stays within the §3.1
+# 60-line ceiling.
+_SEMANTIC_SEARCH_DESCRIPTION = (
+    "PREFERRED, no-cost search — use for almost every query. Returns "
+    "ranked source documents (snippets + Paperless deep-links) matching "
+    "the query; no synthesised answer. Makes zero LLM calls and does "
+    "not bill the archive owner. Read the sources and synthesise the "
+    "answer yourself. Optional 'filters' narrows by correspondent, "
+    "document type, tag, or date. Filters are a hard scope: every "
+    "returned document matches every filter, and they are never "
+    "relaxed; multiple tag_ids are ANDed (a document must carry every "
+    "tag)."
+)
+_DEEP_SEARCH_DESCRIPTION = (
+    "COSTLY, last-resort search. Runs the archive's server-side agentic "
+    "pipeline (planner + judge + synthesiser) and returns a written "
+    "answer plus sources. Spends the archive owner's paid LLM API "
+    "budget on every call. Prefer semantic_search and synthesise "
+    "yourself; only call this when you truly cannot. Optional 'filters' "
+    "narrows results. Filters are a hard scope: every returned document "
+    "matches every filter, and they are never relaxed; multiple tag_ids "
+    "are ANDed (a document must carry every tag)."
+)
+_KEYWORD_SEARCH_DESCRIPTION = (
+    "Free. Exact full-text keyword search over document content plus "
+    "title/correspondent/type, optionally narrowed by correspondent_id, "
+    "document_type_id, tag_ids, date_from/date_to; returns a ranked "
+    "DOCUMENT list (not passages). Use for exact terms, names, or "
+    "reference numbers, or to enumerate/filter (e.g. every document "
+    "tagged X from 2024). Omit 'query' to list documents by filter "
+    "alone. Discover valid filter ids with list_filters. Filters are a "
+    "hard scope (never relaxed); multiple tag_ids are ANDed (a document "
+    "must carry every tag). Makes no LLM call. 'limit' defaults to 20 "
+    "(max 50); 'offset' paginates."
+)
+
+
 def _register_search_tools(
     mcp: FastMCP,
 ```
@@ -2786,50 +2820,60 @@ with:
 In `src/search/mcp_server.py`, replace:
 
 ```python
+        description=(
+            "PREFERRED, no-cost search — use for almost every query. Returns "
+            "ranked source documents (snippets + Paperless deep-links) matching "
+            "the query; no synthesised answer. Makes zero LLM calls and does "
+            "not bill the archive owner. Read the sources and synthesise the "
             "answer yourself. Optional 'filters' narrows by correspondent, "
             "document type, tag, or date."
+        ),
 ```
 
 with:
 
 ```python
-            "answer yourself. Optional 'filters' narrows by correspondent, "
-            "document type, tag, or date. Filters are a hard scope: every "
-            "returned document matches every filter, and they are never "
-            "relaxed; multiple tag_ids are ANDed (a document must carry every "
-            "tag)."
+        description=_SEMANTIC_SEARCH_DESCRIPTION,
 ```
 
 In `src/search/mcp_server.py`, replace:
 
 ```python
+        description=(
+            "COSTLY, last-resort search. Runs the archive's server-side agentic "
+            "pipeline (planner + judge + synthesiser) and returns a written "
+            "answer plus sources. Spends the archive owner's paid LLM API "
+            "budget on every call. Prefer semantic_search and synthesise "
             "yourself; only call this when you truly cannot. Optional 'filters' "
             "narrows results."
+        ),
 ```
 
 with:
 
 ```python
-            "yourself; only call this when you truly cannot. Optional 'filters' "
-            "narrows results. Filters are a hard scope: every returned document "
-            "matches every filter, and they are never relaxed; multiple tag_ids "
-            "are ANDed (a document must carry every tag)."
+        description=_DEEP_SEARCH_DESCRIPTION,
 ```
 
 In `src/search/mcp_server.py`, replace:
 
 ```python
+        description=(
+            "Free. Exact full-text keyword search over document content plus "
+            "title/correspondent/type, optionally narrowed by correspondent_id, "
+            "document_type_id, tag_ids, date_from/date_to; returns a ranked "
+            "DOCUMENT list (not passages). Use for exact terms, names, or "
+            "reference numbers, or to enumerate/filter (e.g. every document "
+            "tagged X from 2024). Omit 'query' to list documents by filter "
             "alone. Discover valid filter ids with list_filters. Makes no LLM "
             "call. 'limit' defaults to 20 (max 50); 'offset' paginates."
+        ),
 ```
 
 with:
 
 ```python
-            "alone. Discover valid filter ids with list_filters. Filters are a "
-            "hard scope (never relaxed); multiple tag_ids are ANDed (a document "
-            "must carry every tag). Makes no LLM call. 'limit' defaults to 20 "
-            "(max 50); 'offset' paginates."
+        description=_KEYWORD_SEARCH_DESCRIPTION,
 ```
 
 In `src/search/mcp_server.py`, replace:
@@ -4141,7 +4185,7 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 
 ## Self-review
 
-- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants` (`retrieve()`) and `test_unscoped_deep_search_still_reaches_both_tenants` (`answer()`), A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 → file headers in B2 (length + import cap), C1, C2, A3 and C1 (test files), A1 (`core.py` import cap); function carve-outs above `_refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1) — all three limits swept on the merged replay. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
+- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants` (`retrieve()`) and `test_unscoped_deep_search_still_reaches_both_tenants` (`answer()`), A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 → file headers in B2 (length + import cap), C1, C2, A3 and C1 (test files), A1 (`core.py` import cap); function carve-outs above `_refine()` (A1), `list_documents()` (C1); `_register_search_tools()` (B2) kept under the ceiling by the three description constants — all three limits swept on the merged replay. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
 - **Placeholder scan.** Every code step is a concrete block that was applied and run; no "TBD", no "similar to Task N".
 - **Type consistency.** `scope` (keyword-only) everywhere `Retriever.retrieve` is called; `_BroadenOutcome` fields `chunks` / `signal` / `broadened` used identically in A3's producer and consumer; `tag_ids` is `tuple[int, ...]` on store models and `tuple[int, ...] | None` on `SourceDocument`, serialised as a list / `null`.
 - **Review Focus.** Five lines, each with a test in its owning task (A1, B1 ×2, B2 ×2).
@@ -4150,12 +4194,13 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 
 | Round | Scope | Verdict | Outcome |
 |---|---|---|---|
-| 1 | full | NO-SHIP 1 major 9 minor | resolved in this commit |
+| 1 | full | NO-SHIP 1 major 9 minor | resolved in `80bfbcc` and this commit |
 
 Round 1 resolution notes:
 
-- F1 → Global Constraints §3.1 now carries all three limits; `# rationale:` above `_refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1); B2's header covers the import cap, A1 extends `core.py`'s header to its import count. F9 → header carve-outs on the four over-ceiling test files (A3, C1) — the repo already treats §3.1 as binding tests (`test_core.py` cites it). F2 → 23 warnings, measured on `ecaeb28`. F3 → the venv line heads every tool-running block; M1 says so in prose. F4 → track branches/worktrees named and created in *Tracks and file sets*; I1 aborts and reports on conflict. F5 → `test_unscoped_deep_search_still_reaches_both_tenants`. F6 → 16 sites (+ the factory). F7 → helper scripts go to the session scratchpad; Task 0's probe uses the worktree's git dir (in-repo, never committed — a session path cannot go in a public plan). F8 → `MagicMock` (what `make_pipeline_settings` returns, not `Settings`), `Path`, `TestClient`, `_McpApp`, `CallToolResult`, `SearchFilters | None`; JSON arguments are `dict[str, object]` (no `Any` left to justify); the `_StrictFastMCP.call_tool` override's `Any` gets a rationale. F10 → row 9 anchored on the `# outer-boundary catch.` comment.
+- F1 → Global Constraints §3.1 now carries all three limits; `# rationale:` above `_refine()` (A1), `list_documents()` (C1); B2's header covers the import cap (40 names before, 45 after: B2 adds five), A1 extends `core.py`'s header to its import count. F9 → header carve-outs on the four over-ceiling test files (A3, C1) — the repo already treats §3.1 as binding tests (`test_core.py` cites it). F2 → 23 warnings, measured on `ecaeb28`. F3 → the venv line heads every tool-running block; M1 says so in prose. F4 → track branches/worktrees named and created in *Tracks and file sets*; I1 aborts and reports on conflict. F5 → `test_unscoped_deep_search_still_reaches_both_tenants`. F6 → 16 sites (+ the factory). F7 → helper scripts go to the session scratchpad; Task 0's probe uses the worktree's git dir (in-repo, never committed — a session path cannot go in a public plan). F8 → `MagicMock` (what `make_pipeline_settings` returns, not `Settings`), `Path`, `TestClient`, `_McpApp`, `CallToolResult`, `SearchFilters | None`; JSON arguments are `dict[str, object]` (no `Any` left to justify); the `_StrictFastMCP.call_tool` override's `Any` gets a rationale. F10 → row 9 anchored on the `# outer-boundary catch.` comment.
 - Re-verified on a fresh scratch replay of `ecaeb28` with every block applied in task order (no anchor missed or duplicated): `ruff check`, `ruff format --check`, `mypy src` clean; `mypy` on the eight new test modules clean (one pre-existing error in `tests/helpers/search.py`, identical on the base); `pytest -n auto` 3571 passed; A1's red set 6 failed / 3 passed; S1's red set 1 failed / 2 passed; a §3.1 sweep (file lines, executable body lines, imported names) of every touched file shows each exception carrying a `# rationale:`; the M1 row-9 anchor occurs once. No TypeScript changed this round.
+- Follow-up (this commit, orchestrator decision): `80bfbcc` had given `_register_search_tools()` a `# rationale:` carve-out, but the function was over 60 only because B2 lengthened three inline tool descriptions (57 executable body lines on `ecaeb28`, 64 after B2 + S1). B2 now moves those three descriptions to module-level constants and the carve-out is dropped. Re-verified on a fresh scratch replay of `ecaeb28`, every block applied in task order: `ruff check`, `ruff format --check`, `mypy src` clean; `pytest -n auto` 3571 passed; the tool descriptions are byte-identical to the inline ones `80bfbcc` specified; `_register_search_tools()` measures 34 executable body lines; the §3.1 sweep lists `mcp_server.py` only for file length (918) and imports (40 → 45), both under its header; the only touched functions over 60 are `_refine()` and `list_documents()`, each with its `# rationale:`.
 
 Round 1 lesson-candidates:
 
