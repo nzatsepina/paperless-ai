@@ -19,10 +19,9 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
-from search.mcp_server import _McpApp, build_mcp_app
-from search.offload import LazySemaphore
 from store.models import KeywordPage, SearchFilters
 from tests.helpers.factories import make_search_result, make_search_settings
+from tests.helpers.search import build_stub_mcp_app as _app
 
 # (tool name, the name of its query argument, the core method it calls)
 _SEARCH_TOOLS = [
@@ -50,14 +49,6 @@ def _core() -> MagicMock:
     core.keyword_search.return_value = KeywordPage(hits=(), total=0, offset=0, limit=20)
     core.settings = make_search_settings()
     return core
-
-
-def _app(core: MagicMock) -> _McpApp:
-    return build_mcp_app(
-        lambda _app_db_path: core,
-        "unused-app-db-path",
-        search_semaphore=LazySemaphore(0),
-    )
 
 
 def _text(result: CallToolResult) -> str:

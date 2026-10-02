@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from search.core import SearchCore
 from search.judge import RelevanceJudge
+from search.mcp_server import _McpApp, build_mcp_app
+from search.offload import LazySemaphore
 from search.planner import QueryPlanner
 from search.retriever import Retriever
 from search.synthesizer import Synthesizer
@@ -60,6 +62,19 @@ def build_search_core(
         retriever=retriever,
         synthesizer=synthesizer,
         judge=judge,
+    )
+
+
+def build_stub_mcp_app(core: Any) -> _McpApp:
+    """Build the MCP app over a stub *core*, unbounded concurrency.
+
+    The one wiring point for the MCP tool tests that drive a single stub core
+    through the in-memory transport (``create_connected_server_and_client_session``).
+    """
+    return build_mcp_app(
+        lambda _app_db_path: core,
+        "unused-app-db-path",
+        search_semaphore=LazySemaphore(0),
     )
 
 

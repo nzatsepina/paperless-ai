@@ -13,10 +13,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from search.mcp_server import build_mcp_app
-from search.offload import LazySemaphore
 from store.models import FilterCatalog, FilterFacet
 from tests.helpers.factories import make_search_settings
+from tests.helpers.search import build_stub_mcp_app as _build_app
 
 
 def _catalog() -> FilterCatalog:
@@ -37,14 +36,6 @@ def _make_core() -> MagicMock:
     core.list_filters.return_value = _catalog()
     core.settings = make_search_settings()
     return core
-
-
-def _build_app(core: MagicMock):
-    return build_mcp_app(
-        lambda _app_db_path: core,
-        "unused-app-db-path",
-        search_semaphore=LazySemaphore(0),
-    )
 
 
 @pytest.mark.anyio
