@@ -21,7 +21,9 @@
 - **`tag_ids` on results (D4):** `IndexedDocument.tag_ids` / `DocumentSummary.tag_ids` are **required** `tuple[int, ...]` (raw ids, not names); `SourceDocument.tag_ids: tuple[int, ...] | None = None` **after** `relevance_tier`, `None` for a pruned row. HTTP response models stay unchanged.
 - **D9:** skip a broaden whose searches (`_spec_search_key()` set) are all in pass 1's; skip branch returns `_BroadenOutcome(chunks=[], signal=<pass-1 signal>, broadened=False)`.
 - **§5.8:** `_retrieve_with_broaden()` returns the frozen `_BroadenOutcome` dataclass, not a 3-tuple.
-- **§3.1:** add the one-line-or-more `# rationale:` header to `src/search/mcp_server.py`, `src/store/reader/_lookups.py`, `src/search/models.py` (over 500 lines, no header today). No splits.
+- **§3.1 — all three limits (file lines, function executable body lines, imported names) on every touched file, tests included** (spec Risks: the file headers *and* "touched functions stay within §3.1"). No splits — a split would move unrelated code and widen the diff past the leak fix; every exception is §3.1's own `# rationale:` carve-out:
+  - **File headers** (over 500 lines, no header today): `src/search/mcp_server.py` (B2 — its header also covers the 30-name import cap, which B2 takes from 40 to 45 names), `src/store/reader/_lookups.py` (C1), `src/search/models.py` (C2); and the four over-ceiling test files this change grows — `tests/unit/search/test_core.py`, `tests/unit/search/test_core_trace.py` (A3), `tests/helpers/factories/_search.py`, `tests/unit/search/test_document_routes.py` (C1). `src/search/core.py`'s existing header covers its length only; A1 extends it to its import count (66 names, unchanged by this change).
+  - **Touched functions over the 60-line ceiling** get a `# rationale:` immediately above the `def`, stating why the function stays whole in this change: `SearchCore._refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1). Every other function this plan edits stays at or under 60 executable body lines (measured on the merged replay). Over-limit functions in touched files that this plan does **not** edit (`SearchCore._answer_uncached()`, `to_search_response()`, `list_filters_with_counts()`) are outside the spec's "touched functions" clause and are left as they are.
 - **Tests encoding the old drop are re-targeted or inverted, never deleted** (GATES: a red gate is never greened by deletion).
 - **Public repository:** no host, container, domain, client, downstream project, real taxonomy id or person anywhere — every id in code, tests and prose is a placeholder (`101`, `202`, `"tenant-a"`).
 - **Every command block runs in the venv, in the worktree that owns the task.** Shell state does not persist between an agent's tool calls, so each block starts with `source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"` (run from that worktree's root). A tool resolved from anywhere else — above all `pip-audit` in G1, which would audit the wrong environment and pass silently — invalidates the result. `web/node_modules` is per checkout: every worktree that runs `npm`/`npx` installs it first (`cd web && npm ci`).
@@ -48,7 +50,16 @@ Inputs and conditions the spec implies but does not enumerate, most likely to bi
 
 ## Tracks and file sets
 
-Tracks A–E run in parallel, one worktree each under `.claude/worktrees/`, branched from `fix/caller-scope-hard`. Tasks inside a track are sequential. The serial phase starts once every track has merged back.
+Tracks A–E run in parallel, one worktree each, branched from `fix/caller-scope-hard`. Tasks inside a track are sequential. The serial phase starts once every track has merged back. Before its first task, each track's branch and worktree are created from the feature worktree (`.claude/worktrees/caller-scope-hard`); the path is anchored on the main checkout, so it never nests inside the feature worktree:
+
+```bash
+WT="$(git rev-parse --path-format=absolute --git-common-dir)/../.claude/worktrees"
+for track in a b c d e; do
+  git worktree add -b "fix/caller-scope-hard-$track" "$WT/caller-scope-hard-$track" fix/caller-scope-hard
+done
+```
+
+Track A → branch `fix/caller-scope-hard-a`, worktree `$WT/caller-scope-hard-a`; B → `fix/caller-scope-hard-b`, `$WT/caller-scope-hard-b`; likewise C, D and E. Each track's implementer runs every command from its own worktree's root.
 
 | Track | Tasks | Files (exact) |
 |---|---|---|
@@ -69,7 +80,7 @@ Tracks A–E run in parallel, one worktree each under `.claude/worktrees/`, bran
 | A3 | Opus | D9 skip semantics, the §5.8 carrier, two re-targeted tests — the subtlest change in the plan |
 | B1 | Sonnet | well-scoped validators and tests |
 | B2 | Opus | security boundary; subclasses a third-party server and moves the error path |
-| C1 | Sonnet | mechanical field threading through 15 construction sites, script given |
+| C1 | Sonnet | mechanical field threading through 16 construction sites (+ the factory), script given |
 | C2 | Sonnet | one optional field, one builder |
 | D1 | Sonnet | small TS change with tests |
 | E1 | Sonnet | prose against fixed anchors |
@@ -96,8 +107,12 @@ python --version   # expect 3.11+
 - [ ] **Step 2: Prove pytest imports the worktree's code**
 
 ```bash
-mkdir -p /tmp/scope-check && printf 'def test_where():\n    import search\n    print("SEARCH_AT", search.__file__)\n' > /tmp/scope-check/test_where.py
-python -m pytest -s -p no:cacheprovider --rootdir=. -c pyproject.toml /tmp/scope-check/test_where.py | grep SEARCH_AT
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
+# Inside this worktree's git dir: writable, never committed, never /tmp root.
+PROBE="$(git rev-parse --path-format=absolute --git-dir)/scope-check"
+mkdir -p "$PROBE" && printf 'def test_where():\n    import search\n    print("SEARCH_AT", search.__file__)\n' > "$PROBE/test_where.py"
+python -m pytest -s -p no:cacheprovider --rootdir=. -c pyproject.toml "$PROBE/test_where.py" | grep SEARCH_AT
+rm -r "$PROBE"
 ```
 
 Expected: `SEARCH_AT <worktree>/src/search/__init__.py`. **Anything under `site-packages` → stop and report**: every later red/green (and every mutation) would be meaningless.
@@ -111,6 +126,7 @@ cd web && npm ci && cd ..
 - [ ] **Step 4: Baseline the Python suite**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest -n auto
 ```
 
@@ -130,7 +146,7 @@ No commit.
 - Create: `tests/unit/search/test_retriever_scope.py`
 - Modify: `tests/unit/search/test_retriever.py`, `tests/unit/search/test_retriever_multispec.py`, `tests/integration/test_salary_april_regression.py` (27 `retriever.retrieve(` calls gain `scope=None`)
 - Modify: `src/search/retriever.py` (`Retriever.retrieve()`, `Retriever._run_passes()`)
-- Modify: `src/search/core.py` (`_retrieve_phase()`, `_retrieve_with_broaden()`, `_refine()` pass the scope)
+- Modify: `src/search/core.py` (`_retrieve_phase()`, `_retrieve_with_broaden()`, `_refine()` pass the scope; `# rationale:` above `_refine()` and the header's import-cap line — §3.1)
 
 **Interfaces:**
 - Produces: `Retriever.retrieve(specs: tuple[RetrievalSpec, ...], *, scope: SearchFilters | None) -> tuple[list[RetrievedChunk], RetrievalSignal]`; `Retriever._run_passes(specs, scope)`; `SearchCore._retrieve_with_broaden(plan, specs, facets, today, ui_filters)` (still a 3-tuple here — A3 changes the return); `seed_pipeline_document(..., tag_ids: tuple[int, ...] = ())`.
@@ -201,7 +217,7 @@ outage, L3 refinement, L8 keyword search, and R6 for an unscoped caller.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from common.embeddings import EmbeddingError
@@ -245,7 +261,7 @@ def _scope(tag_id: int) -> SearchFilters:
     )
 
 
-def _seed_two_tenants(tmp_path: Any) -> Any:
+def _seed_two_tenants(tmp_path: Path) -> MagicMock:
     """Seed tenant A off the query axis and tenant B on it; return settings."""
     settings = make_pipeline_settings(tmp_path)
     writer = StoreWriter(settings)
@@ -281,11 +297,11 @@ def _seed_two_tenants(tmp_path: Any) -> Any:
 
 
 def _core(
-    settings: Any,
+    settings: MagicMock,
     reader: StoreReader,
     *,
     llm_client: ScriptedLLMClient | None = None,
-    embedding_client: Any = None,
+    embedding_client: MagicMock | None = None,
 ) -> SearchCore:
     return build_search_core(
         settings=settings,
@@ -309,7 +325,7 @@ def _assert_all_carry(
     assert not leaked, f"documents outside the scope were returned: {leaked}"
 
 
-def test_scoped_semantic_search_returns_only_the_scope(tmp_path: Any) -> None:
+def test_scoped_semantic_search_returns_only_the_scope(tmp_path: Path) -> None:
     """L1: recall twins no longer drop the caller's tag."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -324,7 +340,7 @@ def test_scoped_semantic_search_returns_only_the_scope(tmp_path: Any) -> None:
         reader.close()
 
 
-def test_scoped_dated_semantic_search_returns_only_the_scope(tmp_path: Any) -> None:
+def test_scoped_dated_semantic_search_returns_only_the_scope(tmp_path: Path) -> None:
     """L1 via L4: the date safety net's twin keeps the caller's tag."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -339,7 +355,7 @@ def test_scoped_dated_semantic_search_returns_only_the_scope(tmp_path: Any) -> N
         reader.close()
 
 
-def test_scope_matching_no_document_returns_nothing(tmp_path: Any) -> None:
+def test_scope_matching_no_document_returns_nothing(tmp_path: Path) -> None:
     """L2: an empty first pass is not broadened past the caller's tag."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -353,7 +369,7 @@ def test_scope_matching_no_document_returns_nothing(tmp_path: Any) -> None:
 
 
 def test_embedding_outage_with_no_scoped_keyword_hit_returns_nothing(
-    tmp_path: Any,
+    tmp_path: Path,
 ) -> None:
     """L2 (outage): no vector pass and an empty scoped FTS pass stay empty."""
     settings = _seed_two_tenants(tmp_path)
@@ -369,7 +385,7 @@ def test_embedding_outage_with_no_scoped_keyword_hit_returns_nothing(
         reader.close()
 
 
-def test_scoped_deep_search_refinement_returns_only_the_scope(tmp_path: Any) -> None:
+def test_scoped_deep_search_refinement_returns_only_the_scope(tmp_path: Path) -> None:
     """L3: the refinement re-plan keeps the caller's tag."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -402,7 +418,7 @@ def test_scoped_deep_search_refinement_returns_only_the_scope(tmp_path: Any) -> 
         reader.close()
 
 
-def test_scoped_keyword_search_returns_only_the_scope(tmp_path: Any) -> None:
+def test_scoped_keyword_search_returns_only_the_scope(tmp_path: Path) -> None:
     """L8: keyword search and filter-only browse honour the caller's tag."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -417,7 +433,7 @@ def test_scoped_keyword_search_returns_only_the_scope(tmp_path: Any) -> None:
         reader.close()
 
 
-def test_multiple_scope_tags_are_anded(tmp_path: Any) -> None:
+def test_multiple_scope_tags_are_anded(tmp_path: Path) -> None:
     """D6: two scope tags require both; no seeded document carries both."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -435,7 +451,7 @@ def test_multiple_scope_tags_are_anded(tmp_path: Any) -> None:
         reader.close()
 
 
-def test_unscoped_search_still_reaches_both_tenants(tmp_path: Any) -> None:
+def test_unscoped_search_still_reaches_both_tenants(tmp_path: Path) -> None:
     """R6: with no filters, both tenants' documents are reachable, as today."""
     settings = _seed_two_tenants(tmp_path)
     reader = StoreReader(settings)
@@ -446,9 +462,32 @@ def test_unscoped_search_still_reaches_both_tenants(tmp_path: Any) -> None:
         assert ids & set(_B_IDS)
     finally:
         reader.close()
+
+
+def test_unscoped_deep_search_still_reaches_both_tenants(tmp_path: Path) -> None:
+    """R6 on ``answer()``: with no filters, both tenants stay reachable."""
+    settings = _seed_two_tenants(tmp_path)
+    reader = StoreReader(settings)
+    llm_client = ScriptedLLMClient(
+        planner_response=planner_response_json(),
+        # citations=[] keeps every retrieved source in the result, so the
+        # reachability check does not depend on what the answer cites.
+        synthesiser_responses=[
+            answered_response_json("Both warranties are on file.", citations=[])
+        ],
+    )
+    try:
+        result = _core(settings, reader, llm_client=llm_client).answer(
+            "boiler warranty", ui_filters=None
+        )
+        ids = {source.document_id for source in result.sources}
+        assert ids & set(_A_IDS)
+        assert ids & set(_B_IDS)
+    finally:
+        reader.close()
 ```
 
-Save this script outside the repository as `add_scope_none.py` and run it from the worktree root (`python <path-to>/add_scope_none.py`); it asserts every count before it writes and stops on any drift — it never commits:
+Save this script as `add_scope_none.py` in the session scratchpad directory your system prompt names (never the repository, never /tmp root) and run it from the worktree root (`python <scratchpad>/add_scope_none.py`); it asserts every count before it writes and stops on any drift — it never commits:
 
 ```python
 """Append ``scope=None`` to every ``retriever.retrieve(...)`` call in the given files.
@@ -634,16 +673,18 @@ def test_intersect_is_idempotent_for_dates_ids_and_duplicate_tags() -> None:
 Then normalise the long lines the script produced (the only formatter fix-up in the plan):
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 ruff format tests/unit/search/test_retriever.py tests/unit/search/test_retriever_multispec.py tests/integration/test_salary_april_regression.py
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/integration/test_caller_scope.py tests/unit/search/test_retriever_scope.py tests/unit/search/test_retriever.py tests/unit/search/test_retriever_multispec.py tests/integration/test_salary_april_regression.py
 ```
 
-Expected: FAIL. In `test_caller_scope.py` the six scoped tests fail on a leaked tenant-B document or a non-empty result (`documents outside the scope were returned` / `assert (...) == ()`); `test_scoped_keyword_search_returns_only_the_scope` (L8 — already clean) and `test_unscoped_search_still_reaches_both_tenants` (R6) pass. Every `retrieve(..., scope=…)` call fails with `TypeError: ... unexpected keyword argument 'scope'`. `test_intersect_is_idempotent_for_dates_ids_and_duplicate_tags` passes — it pins an existing property of `_intersect()`.
+Expected: FAIL. In `test_caller_scope.py` the six scoped tests fail on a leaked tenant-B document or a non-empty result (`documents outside the scope were returned` / `assert (...) == ()`); `test_scoped_keyword_search_returns_only_the_scope` (L8 — already clean), `test_unscoped_search_still_reaches_both_tenants` and `test_unscoped_deep_search_still_reaches_both_tenants` (R6, on `retrieve()` and `answer()`) pass. Every `retrieve(..., scope=…)` call fails with `TypeError: ... unexpected keyword argument 'scope'`. `test_intersect_is_idempotent_for_dates_ids_and_duplicate_tags` passes — it pins an existing property of `_intersect()`.
 
 - [ ] **Step 3: Implement the choke point**
 
@@ -831,10 +872,51 @@ with:
         new_chunks, _signal = self._retriever.retrieve(new_specs, scope=ui_filters)
 ```
 
+`_refine()` is over the §3.1 60-line ceiling and this task edits it, so it gets the function-level carve-out (spec Risks: "touched functions stay within §3.1"; no split in this change). In `src/search/core.py`, replace:
+
+```python
+    def _refine(
+        self,
+```
+
+with:
+
+```python
+    # rationale: over the §3.1 60-line ceiling. One refinement pass is one
+    # ordered sequence — re-plan, the clarify and no-op exits, retrieve, merge,
+    # re-judge, re-synthesise — sharing the LLM budget, the telemetry and one
+    # returned triple. This change only passes the caller scope to its
+    # retrieve; a split would widen a leak-fix diff (spec
+    # 20261002-caller-scope-hard, Risks).
+    def _refine(
+        self,
+```
+
+The file header already carries the length carve-out; it does not cover the 30-name import cap (66 names; this change adds none). In `src/search/core.py`, replace:
+
+```python
+# Splitting _LlmBudget into its own module would add an import edge with no
+# cohesion benefit. The Wave 4 simplification audit accepted this length.
+"""
+```
+
+with:
+
+```python
+# Splitting _LlmBudget into its own module would add an import edge with no
+# cohesion benefit. The Wave 4 simplification audit accepted this length.
+# The imported names exceed the §3.1 30-name cap for the same reason: the one
+# orchestrator drives every pipeline stage and names each stage's I/O shapes,
+# so only a split would lower the count, and the caller-scope change adds no
+# import (spec 20261002-caller-scope-hard, Risks).
+"""
+```
+
 
 - [ ] **Step 4: Run the tests and the core suites that call `_retrieve_with_broaden`**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/integration/test_caller_scope.py tests/unit/search/test_retriever_scope.py tests/unit/search/test_retriever.py tests/unit/search/test_retriever_multispec.py tests/integration/test_salary_april_regression.py tests/unit/search/test_core.py tests/unit/search/test_core_trace.py tests/unit/search/test_core_sources.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -966,7 +1048,7 @@ def test_scoped_raw_rag_plan_appends_no_twin() -> None:
     assert all(spec.filters == _intersect(_EMPTY_FILTERS, scope) for spec in specs)
 ```
 
-Save this script outside the repository as `fix_ui_filters_test.py` and run it from the worktree root (`python <path-to>/fix_ui_filters_test.py`); it asserts every count before it writes and stops on any drift — it never commits:
+Save this script as `fix_ui_filters_test.py` in the session scratchpad directory your system prompt names (never the repository, never /tmp root) and run it from the worktree root (`python <scratchpad>/fix_ui_filters_test.py`); it asserts every count before it writes and stops on any drift — it never commits:
 
 ```python
 """Make TestUiFilters assert every vector_search call (it passed for the wrong reason)."""
@@ -1126,6 +1208,7 @@ def test_refinement_specs_carry_the_caller_scope() -> None:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_resolve_specs_scope.py tests/unit/search/test_core_scope.py tests/unit/search/test_core_sources.py tests/unit/search/test_resolve_specs.py
 ```
 
@@ -1266,6 +1349,7 @@ with:
 - [ ] **Step 4: Run the tests**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_resolve_specs_scope.py tests/unit/search/test_core_scope.py tests/unit/search/test_core_sources.py tests/unit/search/test_resolve_specs.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -1284,6 +1368,7 @@ git commit -m "fix(search): keep the caller scope on recall twins"
 In `src/search/retriever.py` change `twin = replace(spec, filters=_intersect(_EMPTY_FILTERS, ui_filters))` to `twin = replace(spec, filters=_EMPTY_FILTERS)` **and** both `_intersect(spec.filters, scope)` in `_run_passes()` to `spec.filters`, then:
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_core_sources.py -k UiFilters   # expect FAIL: a vector_search call without correspondent_id=55
 git checkout -- src/search/retriever.py && git status --short          # expect clean
 python -m pytest tests/unit/search/test_core_sources.py -k UiFilters   # expect PASS
@@ -1294,8 +1379,8 @@ Record the FAILED line in the task report. (With either fix alone in place it pa
 ### Task A3: Broaden keeps the scope, skips a repeat of pass 1, returns a dataclass (Opus)
 
 **Files:**
-- Modify: `tests/unit/search/test_core.py` (`TestEmptyRetrieval.test_broaden_retry_runs_before_giving_up` — re-targeted)
-- Modify: `tests/unit/search/test_core_trace.py` (`TestRetrieveDetail.test_retrieve_detail_marks_broadened_on_second_pass` — re-targeted)
+- Modify: `tests/unit/search/test_core.py` (`TestEmptyRetrieval.test_broaden_retry_runs_before_giving_up` — re-targeted; `# rationale:` header — §3.1)
+- Modify: `tests/unit/search/test_core_trace.py` (`TestRetrieveDetail.test_retrieve_detail_marks_broadened_on_second_pass` — re-targeted; `# rationale:` header — §3.1)
 - Modify: `tests/unit/search/test_core_scope.py` (append the L2 and D9 tests)
 - Modify: `src/search/core.py` (`_BroadenOutcome`, `_retrieve_phase()`, `_retrieve_with_broaden()`, docstrings of `answer()` and `retrieve()`)
 
@@ -1309,7 +1394,7 @@ Record the FAILED line in the task report. (With either fix alone in place it pa
 
 - [ ] **Step 1: Re-target the two tests (green before and after) and write the failing tests**
 
-Save this script outside the repository as `retarget_broaden.py` and run it from the worktree root (`python <path-to>/retarget_broaden.py`); it asserts every count before it writes and stops on any drift — it never commits:
+Save this script as `retarget_broaden.py` in the session scratchpad directory your system prompt names (never the repository, never /tmp root) and run it from the worktree root (`python <scratchpad>/retarget_broaden.py`); it asserts every count before it writes and stops on any drift — it never commits:
 
 ```python
 """Re-target the two broaden tests to a twin-capped plan (spec D9)."""
@@ -1510,9 +1595,51 @@ def test_scoped_search_with_an_empty_first_pass_does_not_repeat_it() -> None:
 ```
 
 
+Both re-targeted test files are already over the §3.1 500-line ceiling and this task grows them, so each gets the header carve-out (Global Constraints §3.1). In `tests/unit/search/test_core.py`, replace:
+
+```python
+retriever, and synthesiser stages over mock store / embedding clients.
+"""
+```
+
+with:
+
+```python
+retriever, and synthesiser stages over mock store / embedding clients.
+
+# rationale: this file exceeds the §3.1 500-line guideline. It is the one
+# suite for the answer() call-count contract, sharing its scripted-driver
+# fixtures; source assembly already moved to test_core_sources. The
+# caller-scope change only re-targets one broaden test, and a further split
+# there would move unrelated tests and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
+"""
+```
+
+In `tests/unit/search/test_core_trace.py`, replace:
+
+```python
+from ``result.stats.trace`` so the two are pinned to agree.
+"""
+```
+
+with:
+
+```python
+from ``result.stats.trace`` so the two are pinned to agree.
+
+# rationale: this file exceeds the §3.1 500-line guideline. Every test drives
+# one pipeline and asserts the per-phase events and the assembled trace
+# against each other, through one set of builders. The caller-scope change
+# only re-targets one broaden test, and a split there would move unrelated
+# tests and widen a leak-fix diff (spec 20261002-caller-scope-hard, Risks).
+"""
+```
+
 - [ ] **Step 2: Run them and watch the new ones fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_core_scope.py tests/unit/search/test_core.py tests/unit/search/test_core_trace.py
 ```
 
@@ -1724,6 +1851,7 @@ with:
 - [ ] **Step 4: Run the track's whole surface**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search tests/integration
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -1839,10 +1967,10 @@ Split from ``test_api.py`` for the §3.1 500-line ceiling.
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi.testclient import TestClient
 
 from appdb.connection import connect
 from appdb.passwords import hash_password
@@ -1854,7 +1982,7 @@ from tests.unit.search.conftest import build_test_client
 _ENDPOINTS = ["/api/search", "/api/search/stream"]
 
 
-def _client_and_headers() -> tuple[Any, dict[str, str], Any]:
+def _client_and_headers() -> tuple[TestClient, dict[str, str], MagicMock]:
     """A test client, a valid API-key header, and the stub core behind it."""
     settings = make_search_settings(INDEX_DB_PATH="/nonexistent/index.db")
     core = MagicMock()
@@ -1883,7 +2011,7 @@ def _client_and_headers() -> tuple[Any, dict[str, str], Any]:
         {"query": "boiler", "filters": {"tag_ids": []}},
     ],
 )
-def test_malformed_filters_are_a_422(endpoint: str, body: dict[str, Any]) -> None:
+def test_malformed_filters_are_a_422(endpoint: str, body: dict[str, object]) -> None:
     client, headers, core = _client_and_headers()
 
     response = client.post(endpoint, json=body, headers=headers)
@@ -1912,6 +2040,7 @@ def test_filters_without_a_tag_ids_key_are_accepted(endpoint: str) -> None:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/wire/test_search.py tests/unit/search/test_api_filters.py
 ```
 
@@ -2067,6 +2196,7 @@ class SearchRequest(BaseModel):
 - [ ] **Step 4: Run**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/wire tests/unit/search/test_api_filters.py tests/unit/search/test_api.py tests/unit/search/test_routes_stream.py tests/integration/test_search_api.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -2084,7 +2214,7 @@ git commit -m "fix(search): reject malformed caller filters at the HTTP boundary
 
 **Files:**
 - Create: `tests/unit/search/test_mcp_server_filters.py`
-- Modify: `src/search/mcp_server.py` (module header + `# rationale:`, imports, `_to_search_filters()`, `_run_search_tool()`, new `_StrictFastMCP`, `_dispatch()`, three tool descriptions, server `instructions`, `build_mcp_app()`)
+- Modify: `src/search/mcp_server.py` (module header + `# rationale:` covering length and the import cap, imports, `_to_search_filters()`, `_run_search_tool()`, new `_StrictFastMCP`, `# rationale:` above `_register_search_tools()`, `_dispatch()`, three tool descriptions, server `instructions`, `build_mcp_app()`)
 
 **Interfaces:**
 - Consumes: B1's `FilterRequest` validators.
@@ -2114,15 +2244,15 @@ Split from ``test_mcp_server.py`` for the §3.1 500-line ceiling, as
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import CallToolResult, TextContent
 
-from search.mcp_server import build_mcp_app
+from search.mcp_server import _McpApp, build_mcp_app
 from search.offload import LazySemaphore
-from store.models import KeywordPage
+from store.models import KeywordPage, SearchFilters
 from tests.helpers.factories import make_search_result, make_search_settings
 
 # (tool name, the name of its query argument, the core method it calls)
@@ -2152,7 +2282,7 @@ def _core() -> MagicMock:
     return core
 
 
-def _app(core: MagicMock) -> Any:
+def _app(core: MagicMock) -> _McpApp:
     return build_mcp_app(
         lambda _app_db_path: core,
         "unused-app-db-path",
@@ -2160,11 +2290,13 @@ def _app(core: MagicMock) -> Any:
     )
 
 
-def _text(result: Any) -> str:
-    return " ".join(block.text for block in result.content if hasattr(block, "text"))
+def _text(result: CallToolResult) -> str:
+    return " ".join(
+        block.text for block in result.content if isinstance(block, TextContent)
+    )
 
 
-def _ui_filters(core: MagicMock, method: str) -> Any:
+def _ui_filters(core: MagicMock, method: str) -> SearchFilters | None:
     """The ``ui_filters`` the tool handed to *method* (kwarg or 2nd positional)."""
     call = getattr(core, method).call_args
     return call.kwargs["ui_filters"] if "ui_filters" in call.kwargs else call.args[1]
@@ -2174,7 +2306,7 @@ def _ui_filters(core: MagicMock, method: str) -> Any:
 @pytest.mark.parametrize(("tool", "query_arg", "method"), _SEARCH_TOOLS)
 @pytest.mark.parametrize(("filters", "key"), _MALFORMED_FILTERS)
 async def test_malformed_filters_are_rejected_naming_the_key(
-    tool: str, query_arg: str, method: str, filters: dict[str, Any], key: str
+    tool: str, query_arg: str, method: str, filters: dict[str, object], key: str
 ) -> None:
     core = _core()
     async with create_connected_server_and_client_session(
@@ -2208,6 +2340,7 @@ async def test_an_iso_timestamp_is_accepted_and_normalised(
 
     assert result.isError is False
     ui_filters = _ui_filters(core, method)
+    assert ui_filters is not None
     assert ui_filters.date_from == "2025-04-25"
     assert ui_filters.tag_ids == (7,)
 
@@ -2216,7 +2349,7 @@ async def test_an_iso_timestamp_is_accepted_and_normalised(
 @pytest.mark.parametrize(("tool", "query_arg", "method"), _SEARCH_TOOLS)
 @pytest.mark.parametrize("arguments", [{}, {"filters": {}}, {"filters": None}])
 async def test_absent_or_empty_filters_mean_no_filters(
-    tool: str, query_arg: str, method: str, arguments: dict[str, Any]
+    tool: str, query_arg: str, method: str, arguments: dict[str, object]
 ) -> None:
     core = _core()
     async with create_connected_server_and_client_session(
@@ -2262,7 +2395,9 @@ async def test_a_correctly_keyed_filters_container_reaches_the_core(
         )
 
     assert result.isError is False
-    assert _ui_filters(core, method).tag_ids == (7, 9)
+    ui_filters = _ui_filters(core, method)
+    assert ui_filters is not None
+    assert ui_filters.tag_ids == (7, 9)
 
 
 @pytest.mark.anyio
@@ -2302,7 +2437,9 @@ async def test_filters_sent_as_a_json_string_are_parsed_then_validated() -> None
         )
 
     assert scoped.isError is False
-    assert _ui_filters(core, "retrieve").tag_ids == (7,)
+    ui_filters = _ui_filters(core, "retrieve")
+    assert ui_filters is not None
+    assert ui_filters.tag_ids == (7,)
     assert typo.isError is True
     assert "tag_id" in _text(typo)
     assert core.retrieve.call_count == 1
@@ -2317,7 +2454,7 @@ async def test_filters_sent_as_a_json_string_are_parsed_then_validated() -> None
     ],
 )
 async def test_the_zero_llm_tools_reject_undeclared_arguments_too(
-    tool: str, arguments: dict[str, Any]
+    tool: str, arguments: dict[str, object]
 ) -> None:
     """The strict server covers all five tools, not only the search tools."""
     async with create_connected_server_and_client_session(
@@ -2333,6 +2470,7 @@ async def test_the_zero_llm_tools_reject_undeclared_arguments_too(
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_mcp_server_filters.py
 ```
 
@@ -2358,7 +2496,11 @@ with:
 # (``_run_tool``) and the filter parse, and the closures must be registered on
 # one FastMCP instance. The caller-scope change that last touched it is a leak
 # fix; splitting the module there would move unrelated code and widen that
-# diff past the fix (spec 20261002-caller-scope-hard, Risks).
+# diff past the fix (spec 20261002-caller-scope-hard, Risks). The imported
+# names exceed the §3.1 30-name cap for the same reason: this one boundary
+# wires session and API-key auth, the spend quota, the core, the store's
+# filter shape, the MCP SDK and the ASGI transport, so only that split would
+# lower the count.
 """
 ```
 
@@ -2562,6 +2704,9 @@ class _StrictFastMCP(FastMCP):
             for tool in await super().list_tools()
         ]
 
+    # rationale: Any mirrors the overridden FastMCP.call_tool signature — tool
+    # arguments and structured results are arbitrary JSON, and an override
+    # must keep its base method's parameter and return types.
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> Sequence[ContentBlock] | dict[str, Any]:
@@ -2580,6 +2725,25 @@ class _StrictFastMCP(FastMCP):
 
 class _McpApp:
     """Thin wrapper
+```
+
+`_register_search_tools()` is over the §3.1 60-line ceiling and this task edits it (`_dispatch` and the descriptions live inside it), so it gets the function-level carve-out (spec Risks; no split in this change). In `src/search/mcp_server.py`, replace:
+
+```python
+def _register_search_tools(
+    mcp: FastMCP,
+```
+
+with:
+
+```python
+# rationale: over the §3.1 60-line ceiling. The five tool closures must be
+# registered on the one FastMCP instance and share the per-request core
+# resolution, the spend-quota scaffold (_run_tool) and the filter dispatch
+# (_dispatch). This change moves the filter parse ahead of _run_tool; a split
+# would widen a leak-fix diff (spec 20261002-caller-scope-hard, Risks).
+def _register_search_tools(
+    mcp: FastMCP,
 ```
 
 In `src/search/mcp_server.py`, replace:
@@ -2702,6 +2866,7 @@ with:
 - [ ] **Step 4: Run the whole MCP surface**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_mcp_server_filters.py tests/unit/search/test_mcp_server.py tests/unit/search/test_mcp_server_asker.py tests/unit/search/test_mcp_server_fetch.py tests/unit/search/test_mcp_server_keyword_search.py tests/unit/search/test_mcp_server_list_filters.py tests/integration/test_mcp_mount.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -2724,8 +2889,8 @@ git commit -m "fix(search): reject undeclared MCP arguments and malformed filter
 **Files:**
 - Create: `tests/unit/store/test_reader_tag_ids.py`
 - Modify: `src/store/models.py` (`IndexedDocument`, `DocumentSummary`)
-- Modify: `src/store/reader/_lookups.py` (`get_documents()`, `get_document_summary()`, `# rationale:` header), `src/store/reader/_browse.py` (`list_documents()`)
-- Modify: `tests/helpers/factories/_search.py` (`make_indexed_document()`)
+- Modify: `src/store/reader/_lookups.py` (`get_documents()`, `get_document_summary()`, `# rationale:` header), `src/store/reader/_browse.py` (`list_documents()` and the `# rationale:` above it — §3.1)
+- Modify: `tests/helpers/factories/_search.py` (`make_indexed_document()`, `# rationale:` header — §3.1); `tests/unit/search/test_document_routes.py` also gains the `# rationale:` header
 - Modify (construction sites, by the script): `tests/unit/store/test_schema.py`, `tests/unit/store/test_models.py`, `tests/unit/search/test_fetch.py`, `tests/unit/search/test_mcp_server_fetch.py`, `tests/unit/search/test_mcp_server_keyword_search.py`, `tests/unit/search/test_document_routes.py`, `tests/unit/search/wire/test_library.py`
 
 **Interfaces:**
@@ -2894,12 +3059,13 @@ with:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/store/test_reader_tag_ids.py
 ```
 
 Expected: 5 FAIL with `AttributeError: 'IndexedDocument' object has no attribute 'tag_ids'` (and the `DocumentSummary` equivalent).
 
-- [ ] **Step 3: Implement — models, the 15 construction sites, the factory, the header**
+- [ ] **Step 3: Implement — models, the 16 construction sites, the factory, the headers, the `list_documents()` rationale**
 
 In `src/store/models.py`, replace:
 
@@ -2971,7 +3137,7 @@ with:
     created: str | None
 ```
 
-Save this script outside the repository as `add_tag_ids_sites.py` and run it from the worktree root (`python <path-to>/add_tag_ids_sites.py`); it asserts every count before it writes and stops on any drift — it never commits:
+Save this script as `add_tag_ids_sites.py` in the session scratchpad directory your system prompt names (never the repository, never /tmp root) and run it from the worktree root (`python <scratchpad>/add_tag_ids_sites.py`); it asserts every count before it writes and stops on any drift — it never commits:
 
 ```python
 """Add ``tag_ids=`` after ``tags=`` in every IndexedDocument/DocumentSummary build.
@@ -3036,9 +3202,71 @@ Allowed deps: sqlite3, json, store.models, store._sql, store.migrations.
 ```
 
 
+`list_documents()` is over the §3.1 60-line ceiling and this task grows it, so it gets the function-level carve-out (spec Risks; no split in this change). In `src/store/reader/_browse.py`, replace:
+
+```python
+def list_documents(
+    conn: sqlite3.Connection,
+```
+
+with:
+
+```python
+# rationale: over the §3.1 60-line ceiling. Most of the body is the count and
+# page SQL, which must run under one held lock so the total matches the page,
+# with the page's tag names resolved inside that same read. This change only
+# threads the raw tag ids into each row; a split would widen a leak-fix diff
+# (spec 20261002-caller-scope-hard, Risks).
+def list_documents(
+    conn: sqlite3.Connection,
+```
+
+Two test files this task grows are already over the 500-line ceiling, so each gets the header carve-out (Global Constraints §3.1). In `tests/helpers/factories/_search.py`, replace:
+
+```python
+replace the ~28 hand-rolled ``_make_*`` builders the search test files used to
+each redeclare.
+"""
+```
+
+with:
+
+```python
+replace the ~28 hand-rolled ``_make_*`` builders the search test files used to
+each redeclare.
+
+# rationale: this file exceeds the §3.1 500-line guideline. It is the package's
+# one search-shapes factory module, and the shapes' builders call each other;
+# the caller-scope change only adds a tag-id parameter, and a split there
+# would move unrelated builders and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
+"""
+```
+
+In `tests/unit/search/test_document_routes.py`, replace:
+
+```python
+exercised the legacy bearer path have been removed.
+"""
+```
+
+with:
+
+```python
+exercised the legacy bearer path have been removed.
+
+# rationale: this file exceeds the §3.1 500-line guideline. Both document
+# routes share one app, auth and stubbed-Paperless fixture set; the
+# caller-scope change only adds a field to three constructions, and a split
+# there would move unrelated tests and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
+"""
+```
+
 - [ ] **Step 4: Run every suite that builds these shapes**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/store tests/unit/search/test_fetch.py tests/unit/search/test_document_routes.py tests/unit/search/wire/test_library.py tests/unit/search/test_mcp_server_fetch.py tests/unit/search/test_mcp_server_keyword_search.py tests/integration/test_library_api.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -3128,6 +3356,7 @@ with:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_sources.py
 ```
 
@@ -3233,6 +3462,7 @@ with:
 - [ ] **Step 4: Run**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search tests/integration
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -3676,10 +3906,20 @@ git commit -m "docs(search): record caller filters as a hard search scope"
 
 **Files:** none edited (merge commits only).
 
-- [ ] **Step 1: Merge each track branch into `fix/caller-scope-hard`**, in the order A, B, C, D, E, with `git merge --no-ff <track-branch>`. A conflict means the disjointness claim above is wrong: stop parallelising, finish the rest sequentially, and record it for the retro.
+- [ ] **Step 1: Merge each track branch into `fix/caller-scope-hard`**, from the feature worktree root (`.claude/worktrees/caller-scope-hard`), in the order A, B, C, D, E:
+
+```bash
+for track in a b c d e; do
+  git merge --no-ff --no-edit "fix/caller-scope-hard-$track" || break
+done
+git status --short
+```
+
+A conflict (a non-zero `git merge`) means the disjointness claim above is wrong: run `git merge --abort`, stop, and report to the orchestrator which track conflicted on which files. Do not resolve it here and do not continue to Step 2.
 - [ ] **Step 2: Run the merged suite and the names check**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest -n auto
 ruff check src tests && ruff format --check src tests && mypy src
 rg -n "_StrictFastMCP|_BroadenOutcome" src | head -4 && rg -n "toSearchRequestBody" web/src | head -3
@@ -3687,7 +3927,16 @@ rg -n "_StrictFastMCP|_BroadenOutcome" src | head -4 && rg -n "toSearchRequestBo
 
 Expected: exit 0 everywhere; each name found.
 
-- [ ] **Step 3: Remove the track worktrees** (`git worktree remove .claude/worktrees/<track>`), never with uncommitted work in them.
+- [ ] **Step 3: Remove the track worktrees and their merged branches**
+
+```bash
+WT="$(git rev-parse --path-format=absolute --git-common-dir)/../.claude/worktrees"
+for track in a b c d e; do
+  git worktree remove "$WT/caller-scope-hard-$track" && git branch -d "fix/caller-scope-hard-$track"
+done
+```
+
+`git worktree remove` refuses a worktree with uncommitted changes and `git branch -d` refuses an unmerged branch: never add `--force` / `-D` — report it instead.
 
 ### Task S1: MCP results carry `tag_ids` — `keyword_search` and the serialised sources (Sonnet)
 
@@ -3715,13 +3964,13 @@ and ``deep_search`` serialise ``SourceDocument`` with ``dataclasses.asdict``, so
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import TextContent
 
-from search.mcp_server import build_mcp_app
+from search.mcp_server import _McpApp, build_mcp_app
 from search.offload import LazySemaphore
 from store.models import DocumentSummary, KeywordHit, KeywordPage
 from tests.helpers.factories import (
@@ -3731,7 +3980,7 @@ from tests.helpers.factories import (
 )
 
 
-def _app(core: MagicMock) -> Any:
+def _app(core: MagicMock) -> _McpApp:
     return build_mcp_app(
         lambda _app_db_path: core,
         "unused-app-db-path",
@@ -3761,7 +4010,9 @@ async def test_sources_carry_tag_ids_and_null_for_a_pruned_row(
     ) as client:
         result = await client.call_tool(tool, {query_arg: "boiler"})
 
-    sources = json.loads(result.content[0].text)["sources"]
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    sources = json.loads(block.text)["sources"]
     assert [source["tag_ids"] for source in sources] == [[101, 102], None]
 
 
@@ -3791,13 +4042,16 @@ async def test_keyword_search_documents_carry_tag_ids() -> None:
     ) as client:
         result = await client.call_tool("keyword_search", {"query": "invoice"})
 
-    assert json.loads(result.content[0].text)["documents"][0]["tag_ids"] == [101]
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    assert json.loads(block.text)["documents"][0]["tag_ids"] == [101]
 ```
 
 
 - [ ] **Step 2: Run them**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_mcp_server_tag_ids.py
 ```
 
@@ -3824,6 +4078,7 @@ with:
 - [ ] **Step 4: Run**
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest tests/unit/search/test_mcp_server_tag_ids.py tests/unit/search/test_mcp_server_keyword_search.py
 ruff check src tests && ruff format --check src tests && mypy src
 ```
@@ -3842,6 +4097,7 @@ git commit -m "feat(search): include tag ids in MCP keyword_search documents"
 **Files:** none. Run each of the ten gates **exactly as written** in `.claude/GATES.md`, from the worktree root, and record each exit code. A red gate means the work is not done: report it, never edit the gate or what it points at.
 
 ```bash
+source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"
 python -m pytest -n auto                                   # gate: python-tests
 mypy src                                                   # gate: python-types
 ruff check src tests && ruff format --check src tests      # gate: python-lint
@@ -3854,13 +4110,13 @@ pip-audit                                                  # gate: python-dep-au
 (cd web && npm audit --omit=dev --audit-level=high)        # gate: web-dep-audit
 ```
 
-Expected: all ten exit 0. `bandit` prints three pre-existing `nosec encountered (B608)` warnings for `src/store/writer.py`; they are not findings. The two audit gates depend on the advisory databases on the day: a new advisory against an untouched dependency is reported to the orchestrator, not "fixed" here. Then delete `web/coverage/` if the run left it untracked (`git status --short` must be clean).
+Expected: all ten exit 0. `bandit` prints 23 pre-existing `nosec encountered` warnings (22 `B608`, 1 `B104`, across eight files — identical on `ecaeb28`); they are not findings. Its pass condition is exit 0 **and** `No issues identified.` in the output. The two audit gates depend on the advisory databases on the day: a new advisory against an untouched dependency is reported to the orchestrator, not "fixed" here. Then delete `web/coverage/` if the run left it untracked (`git status --short` must be clean).
 
 ### Task M1: The fourteen mutations — break, run, observe red, restore (Sonnet)
 
 **Files:** none committed. The tree is clean before each mutation and restored with `git checkout -- <file>` after it — never `git stash`, never a commit. Each row is run **only now**; the "expected red" column is the prediction from the plan's dry run, and the report records the test ids that actually went red. A mutation that leaves every test green is a **finding** — stop and report it; never weaken the mutation to make it bite.
 
-For each row: apply the change, run the command, read the FAILED lines, `git checkout -- <file(s)>`, confirm `git status --short` is clean.
+Run every command from the feature worktree root after `source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"` (Global Constraints: shell state does not persist between tool calls, so prefix each run with it). For each row: apply the change, run the command, read the FAILED lines, `git checkout -- <file(s)>`, confirm `git status --short` is clean.
 
 | # | Mutation (exact edit) | Run | Expected red (at least) |
 |---|---|---|---|
@@ -3872,7 +4128,7 @@ For each row: apply the change, run the command, read the FAILED lines, `git che
 | 6 | `src/search/wire/search.py` `FilterRequest`: delete `model_config = ConfigDict(extra="forbid")` | `python -m pytest tests/unit/search/wire/test_search.py tests/unit/search/test_mcp_server_filters.py tests/unit/search/test_api_filters.py` | `test_filter_request_rejects_an_unknown_key[*]`; the `tag_id` / `tags` rows of `test_malformed_filters_are_rejected_naming_the_key`; the `{"tag_id": 5}` row of `test_malformed_filters_are_a_422` |
 | 7 | `src/search/wire/search.py`: delete the `@field_validator("date_from", "date_to")` decorator line | same as 6 | every `test_filter_request_rejects_a_non_iso_date[*]`; the date rows on MCP and HTTP |
 | 8 | `src/search/wire/search.py`: delete the `@model_validator(mode="after")` decorator line | same as 6 | `test_filter_request_rejects_an_explicitly_empty_tag_list`; the `tag_ids: []` rows on MCP (all three tools) and HTTP (both endpoints) |
-| 9 | `src/search/mcp_server.py`: move conversion back inside the `try` — in `_dispatch()` delete `ui_filters = _to_search_filters(filters)` and pass `filters=filters`; in `_run_search_tool()` call `core_call(query, _to_search_filters(filters), asker)` | `python -m pytest tests/unit/search/test_mcp_server_filters.py` | the `semantic_search` / `deep_search` rows of `test_malformed_filters_are_rejected_naming_the_key` (`search failed` text) |
+| 9 | `src/search/mcp_server.py`: move conversion back inside the `try` — in `_dispatch()` delete the `ui_filters = _to_search_filters(filters)` line directly after the `# outer-boundary catch.` comment (which follows `raw_asker = mcp_asker.get()`) — **not** the identical line in `keyword_search` — and pass `filters=filters`; in `_run_search_tool()` call `core_call(query, _to_search_filters(filters), asker)` | `python -m pytest tests/unit/search/test_mcp_server_filters.py` | the `semantic_search` / `deep_search` rows of `test_malformed_filters_are_rejected_naming_the_key` (`search failed` text) |
 | 10 | Mutations 1 + 2 + 3 + 4 together (choke point and every site) | `python -m pytest tests/integration/test_caller_scope.py` | the six scoped tests (L1, L1 via L4, L2 ×2, L3, multi-tag AND) |
 | 11 | `web/src/api/client/search.ts` `toSearchRequestBody()`: make the first statement `return JSON.stringify(body);` | `cd web && npx vitest run src/api/client/search.test.ts src/api/client/searchStream.test.ts` | `drops an empty tag_ids and keeps the other filters`; both `sends no tag_ids key for an untagged search` |
 | 12 | `src/search/wire/search.py` `SearchRequest`: delete its `model_config = ConfigDict(extra="forbid")` | `python -m pytest tests/unit/search/wire/test_search.py tests/unit/search/test_api_filters.py` | `test_search_request_rejects_a_mis_keyed_filters_container`; the `filter` / `Filters` rows of `test_malformed_filters_are_a_422` on both endpoints |
@@ -3885,7 +4141,25 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 
 ## Self-review
 
-- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants`, A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 headers → B2, C1, C2. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
+- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants` (`retrieve()`) and `test_unscoped_deep_search_still_reaches_both_tenants` (`answer()`), A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 → file headers in B2 (length + import cap), C1, C2, A3 and C1 (test files), A1 (`core.py` import cap); function carve-outs above `_refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1) — all three limits swept on the merged replay. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
 - **Placeholder scan.** Every code step is a concrete block that was applied and run; no "TBD", no "similar to Task N".
 - **Type consistency.** `scope` (keyword-only) everywhere `Retriever.retrieve` is called; `_BroadenOutcome` fields `chunks` / `signal` / `broadened` used identically in A3's producer and consumer; `tag_ids` is `tuple[int, ...]` on store models and `tuple[int, ...] | None` on `SourceDocument`, serialised as a list / `null`.
 - **Review Focus.** Five lines, each with a test in its owning task (A1, B1 ×2, B2 ×2).
+
+## Review rounds
+
+| Round | Scope | Verdict | Outcome |
+|---|---|---|---|
+| 1 | full | NO-SHIP 1 major 9 minor | resolved in this commit |
+
+Round 1 resolution notes:
+
+- F1 → Global Constraints §3.1 now carries all three limits; `# rationale:` above `_refine()` (A1), `_register_search_tools()` (B2), `list_documents()` (C1); B2's header covers the import cap, A1 extends `core.py`'s header to its import count. F9 → header carve-outs on the four over-ceiling test files (A3, C1) — the repo already treats §3.1 as binding tests (`test_core.py` cites it). F2 → 23 warnings, measured on `ecaeb28`. F3 → the venv line heads every tool-running block; M1 says so in prose. F4 → track branches/worktrees named and created in *Tracks and file sets*; I1 aborts and reports on conflict. F5 → `test_unscoped_deep_search_still_reaches_both_tenants`. F6 → 16 sites (+ the factory). F7 → helper scripts go to the session scratchpad; Task 0's probe uses the worktree's git dir (in-repo, never committed — a session path cannot go in a public plan). F8 → `MagicMock` (what `make_pipeline_settings` returns, not `Settings`), `Path`, `TestClient`, `_McpApp`, `CallToolResult`, `SearchFilters | None`; JSON arguments are `dict[str, object]` (no `Any` left to justify); the `_StrictFastMCP.call_tool` override's `Any` gets a rationale. F10 → row 9 anchored on the `# outer-boundary catch.` comment.
+- Re-verified on a fresh scratch replay of `ecaeb28` with every block applied in task order (no anchor missed or duplicated): `ruff check`, `ruff format --check`, `mypy src` clean; `mypy` on the eight new test modules clean (one pre-existing error in `tests/helpers/search.py`, identical on the base); `pytest -n auto` 3571 passed; A1's red set 6 failed / 3 passed; S1's red set 1 failed / 2 passed; a §3.1 sweep (file lines, executable body lines, imported names) of every touched file shows each exception carrying a `# rationale:`; the M1 row-9 anchor occurs once. No TypeScript changed this round.
+
+Round 1 lesson-candidates:
+
+- A §3.1 sweep measures all three limits (file lines, function body lines, imported names) on every touched file — tests included — after the plan's edits, not file length alone.
+- A gate step's expected output (warning counts, skip counts) is measured on the base, never remembered.
+- A parallel-track plan names each track's branch and worktree where it creates them, so the merge task carries no `<placeholder>` and its conflict rule fits the moment it runs.
+- A type tightening reads the factory's real return type (`MagicMock`, not the class it imitates) and prefers `object` over a commented `Any` where the value is only passed through.
