@@ -18,6 +18,12 @@ pattern from test_deps.py.
 
 Wave 3 note: the legacy SEARCH_API_KEY bearer is retired. Tests that
 exercised the legacy bearer path have been removed.
+
+# rationale: this file exceeds the §3.1 500-line guideline. Both document
+# routes share one app, auth and stubbed-Paperless fixture set; the
+# caller-scope change only adds a field to three constructions, and a split
+# there would move unrelated tests and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
 """
 
 from __future__ import annotations
@@ -344,6 +350,7 @@ _DOCUMENT_SUMMARY = DocumentSummary(
     correspondent="ACME Ltd",
     document_type="Invoice",
     tags=("tax", "2024"),
+    tag_ids=(),
     created="2024-01-15T00:00:00Z",
     page_count=3,
 )
@@ -496,6 +503,7 @@ def _min_summary(doc_id: int) -> DocumentSummary:
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=None,
     )
@@ -633,6 +641,7 @@ def test_patch_document_forwards_metadata_to_paperless(app_db_path, conn) -> Non
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=None,
     )

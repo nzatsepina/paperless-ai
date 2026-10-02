@@ -15,6 +15,12 @@ Each factory fills every irrelevant field with a deterministic default so a
 test spells out only the field under test (CODE_GUIDELINES §11.5).  These
 replace the ~28 hand-rolled ``_make_*`` builders the search test files used to
 each redeclare.
+
+# rationale: this file exceeds the §3.1 500-line guideline. It is the package's
+# one search-shapes factory module, and the shapes' builders call each other;
+# the caller-scope change only adds a tag-id parameter, and a split there
+# would move unrelated builders and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
 """
 
 from __future__ import annotations
@@ -290,6 +296,7 @@ def make_indexed_document(
     correspondent: str | None = None,
     document_type: str | None = None,
     tags: tuple[str, ...] = (),
+    tag_ids: tuple[int, ...] = (),
     created: str | None = "2024-01-15T00:00:00+00:00",
 ) -> IndexedDocument:
     """Create an IndexedDocument as StoreReader.get_documents returns it."""
@@ -299,6 +306,7 @@ def make_indexed_document(
         correspondent=correspondent,
         document_type=document_type,
         tags=tags,
+        tag_ids=tag_ids,
         created=created,
     )
 
