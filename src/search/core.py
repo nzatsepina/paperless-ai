@@ -865,8 +865,9 @@ class SearchCore:
         to power the deterministic date safety net (design §5.2): if no resolved
         spec carries a date filter but the query names an explicit period, a
         date-scoped spec is appended automatically.  ``max_specs`` enables the
-        unfiltered recall-twin pass — a bad filter can never silently exclude the
-        answer because its filter-stripped twin still retrieves it.
+        recall-twin pass — a bad *planner* guess can never silently exclude the
+        answer because its guess-stripped twin still retrieves it; the twin
+        keeps *ui_filters*, which are a hard scope, not a guess.
         """
         today = date.today()
         specs = resolve_specs(
@@ -1274,7 +1275,7 @@ class SearchCore:
                 refinement pass), fed to the re-plan and the no-op comparison.
             facets: The taxonomy, cached from the first retrieve, reused to
                 resolve the re-plan with no extra ``list_facets`` round-trip.
-            ui_filters: The authoritative UI filters, if any.
+            ui_filters: The caller's filters (a hard scope), if any.
             budget: The LLM-call budget; the re-plan and synthesise are recorded.
             mode: ``"exploratory"`` for an intermediate pass, ``"final"`` for
                 the last allowed pass.

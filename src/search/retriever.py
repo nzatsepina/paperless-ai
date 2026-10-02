@@ -390,19 +390,20 @@ def resolve_specs(
             deterministic date extractor after resolution to power the safety
             net.  Defaults to ``""`` (safety net disabled) so callers that do
             not need the safety net — such as the broadened retrieval pass,
-            which deliberately drops all date filters — can omit it.
-        max_specs: When set, enables the unfiltered recall-twin pass after the
-            safety net: every resolved spec that carries a filter gains a
-            filter-stripped twin (deduped on retrieval identity). Only twins are
-            bounded by ``max_specs`` — originals (including a safety-net spec)
-            always survive, so the total can be ``max_specs + 1`` when the
-            safety net also fired. ``None`` (the default) disables twinning, so
-            the broadened pass — which already drops all filters — is unaffected.
+            which deliberately drops the planner's date guesses — can omit it.
+        max_specs: When set, enables the recall-twin pass after the safety net:
+            every resolved spec that carries a filter gains a twin with the
+            planner's guesses stripped and *ui_filters* kept (deduped on
+            retrieval identity). Only twins are bounded by ``max_specs`` —
+            originals (including a safety-net spec) always survive, so the total
+            can be ``max_specs + 1`` when the safety net also fired. ``None``
+            (the default) disables twinning, so the broadened pass — which
+            already strips every planner guess — is unaffected.
 
     Returns:
         One :class:`~search.models.RetrievalSpec` per planned spec, in order,
         plus an optional safety-net spec and, when ``max_specs`` is set, the
-        deduped unfiltered twins.
+        deduped recall twins.
     """
     resolved: list[RetrievalSpec] = []
     for spec in plan.specs:
@@ -418,7 +419,7 @@ def resolve_specs(
             )
 
     if max_specs is not None:
-        resolved = _append_unfiltered_twins(resolved, max_specs)
+        resolved = _append_unfiltered_twins(resolved, max_specs, ui_filters)
 
     return tuple(resolved)
 
@@ -457,16 +458,21 @@ def _retrieval_key(spec: RetrievalSpec) -> tuple[object, ...]:
 
 
 def _append_unfiltered_twins(
-    resolved: list[RetrievalSpec], max_specs: int
+    resolved: list[RetrievalSpec],
+    max_specs: int,
+    ui_filters: SearchFilters | None,
 ) -> list[RetrievalSpec]:
-    """Append a filter-stripped twin of each filtered spec (deduped, capped).
+    """Append a planner-filter-stripped twin of each filtered spec (deduped, capped).
 
-    Recall insurance: a wrong filter silently *excludes* the answer, and the
-    tightest spec is the most filtered.  Each filtered spec gains a twin with the
-    same query but no filters, so whatever a filter excluded is still retrieved;
-    if the filter was right, RRF fusion rewards the document found by both the
-    filtered spec and its twin.  The twin is the *same query* with filters off,
-    so it cannot drift off-topic — it only re-admits what a filter removed.
+    Recall insurance against the *planner*: a wrong planner guess silently
+    *excludes* the answer, and the tightest spec is the most filtered.  Each
+    filtered spec gains a twin with the same query and the planner's guesses
+    stripped, so whatever a guess excluded is still retrieved; if the guess was
+    right, RRF fusion rewards the document found by both.  The caller's
+    *ui_filters* are a hard scope, not a guess, so the twin keeps them: its
+    filters are ``_intersect(_EMPTY_FILTERS, ui_filters)``.  A spec whose only
+    filters are the caller scope therefore yields a twin equal to itself, which
+    the dedup below drops.
 
     Dedup is on retrieval identity (mode, query, keywords, filters), so a twin
     identical to an existing unfiltered spec is dropped, and rationale text never
@@ -480,7 +486,7 @@ def _append_unfiltered_twins(
             break
         if not _has_filter(spec.filters):
             continue
-        twin = replace(spec, filters=_EMPTY_FILTERS)
+        twin = replace(spec, filters=_intersect(_EMPTY_FILTERS, ui_filters))
         key = _retrieval_key(twin)
         if key in seen:
             continue
