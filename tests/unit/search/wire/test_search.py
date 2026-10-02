@@ -137,82 +137,39 @@ def test_search_request_rejects_a_mis_keyed_filters_container() -> None:
 # FilterRequest — strict int validation (security: reject lax coercion of booleans, strings, floats)
 
 
-def test_filter_request_rejects_tag_ids_with_boolean() -> None:
-    """A filter with a boolean in tag_ids is rejected — strict int only."""
-    with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=[True])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"tag_ids": [True]},
+        {"tag_ids": ["5"]},
+        {"tag_ids": [5.0]},
+        {"tag_ids": [0]},
+        {"tag_ids": [-1]},
+        {"correspondent_id": True},
+        {"correspondent_id": "5"},
+        {"correspondent_id": 0},
+        {"correspondent_id": -1},
+        {"document_type_id": True},
+        {"document_type_id": "5"},
+        {"document_type_id": 0},
+        {"document_type_id": -1},
+    ],
+)
+def test_filter_request_rejects_a_non_positive_or_non_integer_id(
+    raw: dict[str, object],
+) -> None:
+    """Strict integers only (no lax coercion of ``true``/``"5"``/``5.0``), > 0."""
+    with pytest.raises(ValidationError, match="valid integer|greater than 0"):
+        FilterRequest.model_validate(raw)
 
 
-def test_filter_request_rejects_tag_ids_with_string() -> None:
-    """A filter with a string in tag_ids is rejected — no lax coercion of "5"."""
-    with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=["5"])
-
-
-def test_filter_request_rejects_tag_ids_with_float() -> None:
-    """A filter with a float in tag_ids is rejected — strict int only."""
-    with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=[5.0])
-
-
-def test_filter_request_rejects_tag_ids_with_zero() -> None:
-    """A filter with zero in tag_ids is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=[0])
-
-
-def test_filter_request_rejects_tag_ids_with_negative() -> None:
-    """A filter with negative ids in tag_ids is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(tag_ids=[-1])
-
-
-def test_filter_request_accepts_tag_ids_with_valid_integers() -> None:
-    """A filter with valid positive integers in tag_ids validates."""
-    filters = FilterRequest(tag_ids=[1, 2, 3])
-    assert filters.tag_ids == [1, 2, 3]
-
-
-def test_filter_request_rejects_correspondent_id_with_boolean() -> None:
-    """A filter with correspondent_id=true is rejected — strict int only."""
-    with pytest.raises(ValidationError):
-        FilterRequest(correspondent_id=True)  # type: ignore[arg-type]
-
-
-def test_filter_request_rejects_correspondent_id_with_zero() -> None:
-    """A filter with correspondent_id=0 is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(correspondent_id=0)
-
-
-def test_filter_request_rejects_correspondent_id_with_negative() -> None:
-    """A filter with correspondent_id=-1 is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(correspondent_id=-1)
-
-
-def test_filter_request_accepts_correspondent_id_with_valid_integer() -> None:
-    """A filter with valid positive correspondent_id validates."""
-    filters = FilterRequest(correspondent_id=42)
-    assert filters.correspondent_id == 42
-
-
-def test_filter_request_rejects_document_type_id_with_zero() -> None:
-    """A filter with document_type_id=0 is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(document_type_id=0)
-
-
-def test_filter_request_rejects_document_type_id_with_negative() -> None:
-    """A filter with document_type_id=-1 is rejected — ids must be positive."""
-    with pytest.raises(ValidationError):
-        FilterRequest(document_type_id=-1)
-
-
-def test_filter_request_accepts_document_type_id_with_valid_integer() -> None:
-    """A filter with valid positive document_type_id validates."""
-    filters = FilterRequest(document_type_id=99)
-    assert filters.document_type_id == 99
+@pytest.mark.parametrize(
+    "raw",
+    [{"tag_ids": [1, 2, 3]}, {"correspondent_id": 42}, {"document_type_id": 99}],
+)
+def test_filter_request_accepts_positive_integer_ids(raw: dict[str, object]) -> None:
+    filters = FilterRequest.model_validate(raw)
+    assert filters.model_dump(exclude_unset=True) == raw
 
 
 @pytest.mark.parametrize(
