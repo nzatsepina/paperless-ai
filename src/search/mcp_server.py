@@ -460,7 +460,9 @@ class _StrictFastMCP(FastMCP):
 
         An unknown tool name is left to FastMCP's own error.
         """
-        tool = next((t for t in await self.list_tools() if t.name == name), None)
+        # super(): the lookup needs no schema copy, unlike the published list.
+        tools = await super().list_tools()
+        tool = next((t for t in tools if t.name == name), None)
         if tool is not None:
             declared = set(tool.inputSchema.get("properties", {}))
             unknown = sorted(set(arguments) - declared)
