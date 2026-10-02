@@ -12,7 +12,7 @@ Forbidden: FastAPI, sqlite3, any I/O.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import (
@@ -119,6 +119,10 @@ def _caller_iso_date(value: str) -> str:
         parsed = None
     if date_part is None or parsed is None or parsed.date().isoformat() != date_part:
         raise ValueError("must be an ISO date (YYYY-MM-DD) or ISO timestamp")
+    if parsed.date() == date.max:
+        # The store's half-open upper bound is "the next day", which does not
+        # exist for the last representable date and would crash the search.
+        raise ValueError("must be an ISO date before 9999-12-31")
     return date_part
 
 

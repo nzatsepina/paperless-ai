@@ -39,6 +39,7 @@ _MALFORMED_FILTERS = [
     ({"date_to": "2025-04-25junk"}, "date_to"),
     ({"date_from": "20250425"}, "date_from"),
     ({"date_to": "2025-W17-5"}, "date_to"),
+    ({"date_to": "9999-12-31"}, "date_to"),
 ]
 
 

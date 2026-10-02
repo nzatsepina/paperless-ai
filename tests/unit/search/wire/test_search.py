@@ -111,6 +111,14 @@ def test_filter_request_stores_the_date_of_an_iso_value(
     assert (request.date_from, request.date_to) == (stored, stored)
 
 
+@pytest.mark.parametrize("field", ["date_from", "date_to"])
+def test_filter_request_rejects_the_last_representable_date(field: str) -> None:
+    """``9999-12-31`` has no next day, so the store's exclusive upper bound
+    would overflow; it is rejected here with a clear error instead."""
+    with pytest.raises(ValidationError, match="before 9999-12-31"):
+        FilterRequest.model_validate({field: "9999-12-31"})
+
+
 def test_filter_request_accepts_an_inverted_date_range() -> None:
     """``date_from`` after ``date_to`` narrows to nothing — it cannot leak, so
     it is not rejected."""
