@@ -23,7 +23,7 @@
 - **§5.8:** `_retrieve_with_broaden()` returns the frozen `_BroadenOutcome` dataclass, not a 3-tuple.
 - **§3.1 — all three limits (file lines, function executable body lines, imported names) on every touched file, tests included** (spec Risks: the file headers *and* "touched functions stay within §3.1"). No splits — a split would move unrelated code and widen the diff past the leak fix; every exception is §3.1's own `# rationale:` carve-out:
   - **File headers** (over 500 lines, no header today): `src/search/mcp_server.py` (B2 — its header also covers the 30-name import cap: the module already imports 40 names, and B2 adds five — `Sequence`, `ToolError`, `ValidationError` and the type-only `ContentBlock` / `MCPTool` — for the strict server and the filter error, taking it to 45), `src/store/reader/_lookups.py` (C1), `src/search/models.py` (C2); and the four over-ceiling test files this change grows — `tests/unit/search/test_core.py`, `tests/unit/search/test_core_trace.py` (A3), `tests/helpers/factories/_search.py`, `tests/unit/search/test_document_routes.py` (C1). `src/search/core.py`'s existing header covers its length only; A1 extends it to its import count (66 names, unchanged by this change).
-  - **Touched functions over the 60-line ceiling** get a `# rationale:` immediately above the `def`, stating why the function stays whole in this change: `SearchCore._refine()` (A1), `list_documents()` (C1). Every other function this plan edits stays at or under 60 executable body lines (measured on the merged replay) — including `_register_search_tools()` (B2, then S1): the three tool descriptions B2 lengthens move to module-level constants (`_SEMANTIC_SEARCH_DESCRIPTION`, `_DEEP_SEARCH_DESCRIPTION`, `_KEYWORD_SEARCH_DESCRIPTION`), so the registrar stays under the ceiling (34 executable body lines on the merged replay, each nested tool closure counted as its own function; 57 on `ecaeb28`) instead of taking a carve-out. Over-limit functions in touched files that this plan does **not** edit (`SearchCore._answer_uncached()`, `to_search_response()`, `list_filters_with_counts()`) are outside the spec's "touched functions" clause and are left as they are.
+  - **Touched functions over the 60-line ceiling** get a `# rationale:` immediately above the `def`, stating why the function stays whole in this change: `SearchCore._refine()` (A1), `list_documents()` (C1), `_register_search_tools()` (B2, then S1). §3.1's count is executable body lines excluding only the signature, decorators, docstring and blank lines, so the registrar counts its nested tool closures: 211 on `ecaeb28`, 190 on the merged replay — over before this change, shortened by it. B2 moves the three tool descriptions it lengthens into module-level constants (`_SEMANTIC_SEARCH_DESCRIPTION`, `_DEEP_SEARCH_DESCRIPTION`, `_KEYWORD_SEARCH_DESCRIPTION`) to shrink the registrar, not to bring it under the ceiling; the `# rationale:` states the pre-existing cause. Every other function this plan edits stays at or under 60 executable body lines (measured on the merged replay). Over-limit functions in touched files that this plan does **not** edit (`SearchCore._answer_uncached()`, `to_search_response()`, `list_filters_with_counts()`) are outside the spec's "touched functions" clause and are left as they are.
 - **Tests encoding the old drop are re-targeted or inverted, never deleted** (GATES: a red gate is never greened by deletion).
 - **Public repository:** no host, container, domain, client, downstream project, real taxonomy id or person anywhere — every id in code, tests and prose is a placeholder (`101`, `202`, `"tenant-a"`).
 - **Every command block runs in the venv, in the worktree that owns the task.** Shell state does not persist between an agent's tool calls, so each block starts with `source "$(git rev-parse --path-format=absolute --git-common-dir)/../.venv/bin/activate"` (run from that worktree's root). A tool resolved from anywhere else — above all `pip-audit` in G1, which would audit the wrong environment and pass silently — invalidates the result. `web/node_modules` is per checkout: every worktree that runs `npm`/`npx` installs it first (`cd web && npm ci`).
@@ -1967,6 +1967,7 @@ Split from ``test_api.py`` for the §3.1 500-line ceiling.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
@@ -1982,7 +1983,14 @@ from tests.unit.search.conftest import build_test_client
 _ENDPOINTS = ["/api/search", "/api/search/stream"]
 
 
-def _client_and_headers() -> tuple[TestClient, dict[str, str], MagicMock]:
+@dataclass(frozen=True)
+class _ApiHarness:
+    client: TestClient
+    headers: dict[str, str]
+    core: MagicMock
+
+
+def _client_and_headers() -> _ApiHarness:
     """A test client, a valid API-key header, and the stub core behind it."""
     settings = make_search_settings(INDEX_DB_PATH="/nonexistent/index.db")
     core = MagicMock()
@@ -1996,7 +2004,7 @@ def _client_and_headers() -> tuple[TestClient, dict[str, str], MagicMock]:
         raw_key = mint_api_key(conn, owner_user_id=user.id, scopes="api")
     finally:
         conn.close()
-    return client, {"Authorization": f"Bearer {raw_key}"}, core
+    return _ApiHarness(client, {"Authorization": f"Bearer {raw_key}"}, core)
 
 
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
@@ -2012,26 +2020,26 @@ def _client_and_headers() -> tuple[TestClient, dict[str, str], MagicMock]:
     ],
 )
 def test_malformed_filters_are_a_422(endpoint: str, body: dict[str, object]) -> None:
-    client, headers, core = _client_and_headers()
+    harness = _client_and_headers()
 
-    response = client.post(endpoint, json=body, headers=headers)
+    response = harness.client.post(endpoint, json=body, headers=harness.headers)
 
     assert response.status_code == 422
-    core.answer.assert_not_called()
+    harness.core.answer.assert_not_called()
 
 
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
 def test_filters_without_a_tag_ids_key_are_accepted(endpoint: str) -> None:
-    client, headers, core = _client_and_headers()
+    harness = _client_and_headers()
 
-    response = client.post(
+    response = harness.client.post(
         endpoint,
         json={"query": "boiler", "filters": {"date_from": "2025-01-01"}},
-        headers=headers,
+        headers=harness.headers,
     )
 
     assert response.status_code == 200
-    ui_filters = core.answer.call_args.kwargs["ui_filters"]
+    ui_filters = harness.core.answer.call_args.kwargs["ui_filters"]
     assert ui_filters.tag_ids == ()
     assert ui_filters.date_from == "2025-01-01"
 ```
@@ -2728,19 +2736,22 @@ class _McpApp:
     """Thin wrapper
 ```
 
-The three descriptions this task lengthens move to module-level constants, so `_register_search_tools()` — whose tool decorators count as its own body lines — stays within the §3.1 60-line ceiling (34 executable body lines after S1, each nested tool closure counted as its own function) instead of needing a carve-out. The `list_filters` and `fetch_documents` descriptions are unchanged and stay inline. In `src/search/mcp_server.py`, replace:
+`_register_search_tools()` is over the §3.1 60-line ceiling and this task edits it (`_dispatch`, the three `description=` arguments), so it gets the function-level carve-out (spec Risks: "touched functions stay within §3.1"; no split in this change). By §3.1's literal count it is 211 executable body lines on `ecaeb28` (nested closures included) and 190 on the merged replay: over before this change, and the three description constants below take it down from what inline text would make it. The `list_filters` and `fetch_documents` descriptions are unchanged and stay inline. Per §3.5 the constants sit after the imports, not above the registrar. In `src/search/mcp_server.py`, replace:
 
 ```python
-def _register_search_tools(
-    mcp: FastMCP,
+    from search.core import SearchCore
+
+
+def _default_paperless_factory(settings: Settings) -> PaperlessClient:
 ```
 
 with:
 
 ```python
+    from search.core import SearchCore
+
 # The descriptions of the three tools that take caller filters live here, not
-# inline in _register_search_tools, so the registrar stays within the §3.1
-# 60-line ceiling.
+# inline in _register_search_tools, to shrink that registrar.
 _SEMANTIC_SEARCH_DESCRIPTION = (
     "PREFERRED, no-cost search — use for almost every query. Returns "
     "ranked source documents (snippets + Paperless deep-links) matching "
@@ -2776,6 +2787,25 @@ _KEYWORD_SEARCH_DESCRIPTION = (
 )
 
 
+def _default_paperless_factory(settings: Settings) -> PaperlessClient:
+```
+
+In `src/search/mcp_server.py`, replace:
+
+```python
+def _register_search_tools(
+    mcp: FastMCP,
+```
+
+with:
+
+```python
+# rationale: over the §3.1 60-line ceiling before this change — the five MCP
+# tools are closures that must register on one FastMCP instance and share the
+# captured `resolve_core`, `app_db_path`, `search_semaphore` and
+# `paperless_factory`. The caller-scope change shortens it (its three
+# filter-taking descriptions move to module constants); a split would widen a
+# leak-fix diff (spec 20261002-caller-scope-hard, Risks).
 def _register_search_tools(
     mcp: FastMCP,
 ```
@@ -4185,7 +4215,7 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 
 ## Self-review
 
-- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants` (`retrieve()`) and `test_unscoped_deep_search_still_reaches_both_tenants` (`answer()`), A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 → file headers in B2 (length + import cap), C1, C2, A3 and C1 (test files), A1 (`core.py` import cap); function carve-outs above `_refine()` (A1), `list_documents()` (C1); `_register_search_tools()` (B2) kept under the ceiling by the three description constants — all three limits swept on the merged replay. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
+- **Spec coverage.** R1 → A1–A3 (retriever paths), B1/B2 (boundary), A1 `test_scoped_keyword_search_returns_only_the_scope` (L8). R2 → existing `test_resolve_specs.py` twin tests stay green unchanged (A2 Step 2/4). R3 → B1, B2, D1. R4 → C1, C2, S1. R5 → B2 (descriptions, `instructions`), E1. R6 → A1 `test_unscoped_search_still_reaches_both_tenants` (`retrieve()`) and `test_unscoped_deep_search_still_reaches_both_tenants` (`answer()`), A3 D9 note. D1–D11 → Global Constraints and the owning tasks; D10 (deploy) is operational, not a task. Leak inventory L1–L11 → one forcing input or pin each (L4/L5 by A1/A2 tests; L9/L10 are out of scope by the spec). "Docstrings that are wrong today" → A2/A3 (core, retriever), B1 (`FilterRequest`), B2 (`_to_search_filters`). §3.1 → file headers in B2 (length + import cap), C1, C2, A3 and C1 (test files), A1 (`core.py` import cap); function carve-outs above `_refine()` (A1), `list_documents()` (C1); `_register_search_tools()` (B2, 190 lines — pre-existing, `# rationale:`; the three description constants shrink it from what inline text would make it) — all three limits swept on the merged replay. §5.8 → A3. Gates → G1. Mutations 1–14 → M1.
 - **Placeholder scan.** Every code step is a concrete block that was applied and run; no "TBD", no "similar to Task N".
 - **Type consistency.** `scope` (keyword-only) everywhere `Retriever.retrieve` is called; `_BroadenOutcome` fields `chunks` / `signal` / `broadened` used identically in A3's producer and consumer; `tag_ids` is `tuple[int, ...]` on store models and `tuple[int, ...] | None` on `SourceDocument`, serialised as a list / `null`.
 - **Review Focus.** Five lines, each with a test in its owning task (A1, B1 ×2, B2 ×2).
@@ -4195,12 +4225,13 @@ The "expected red" column is a **prediction** from the plan author's dry run on 
 | Round | Scope | Verdict | Outcome |
 |---|---|---|---|
 | 1 | full | NO-SHIP 1 major 9 minor | resolved in `80bfbcc` and this commit |
+| 2 | incremental | NO-SHIP 1 major 2 minor | resolved in this commit |
 
 Round 1 resolution notes:
 
 - F1 → Global Constraints §3.1 now carries all three limits; `# rationale:` above `_refine()` (A1), `list_documents()` (C1); B2's header covers the import cap (40 names before, 45 after: B2 adds five), A1 extends `core.py`'s header to its import count. F9 → header carve-outs on the four over-ceiling test files (A3, C1) — the repo already treats §3.1 as binding tests (`test_core.py` cites it). F2 → 23 warnings, measured on `ecaeb28`. F3 → the venv line heads every tool-running block; M1 says so in prose. F4 → track branches/worktrees named and created in *Tracks and file sets*; I1 aborts and reports on conflict. F5 → `test_unscoped_deep_search_still_reaches_both_tenants`. F6 → 16 sites (+ the factory). F7 → helper scripts go to the session scratchpad; Task 0's probe uses the worktree's git dir (in-repo, never committed — a session path cannot go in a public plan). F8 → `MagicMock` (what `make_pipeline_settings` returns, not `Settings`), `Path`, `TestClient`, `_McpApp`, `CallToolResult`, `SearchFilters | None`; JSON arguments are `dict[str, object]` (no `Any` left to justify); the `_StrictFastMCP.call_tool` override's `Any` gets a rationale. F10 → row 9 anchored on the `# outer-boundary catch.` comment.
 - Re-verified on a fresh scratch replay of `ecaeb28` with every block applied in task order (no anchor missed or duplicated): `ruff check`, `ruff format --check`, `mypy src` clean; `mypy` on the eight new test modules clean (one pre-existing error in `tests/helpers/search.py`, identical on the base); `pytest -n auto` 3571 passed; A1's red set 6 failed / 3 passed; S1's red set 1 failed / 2 passed; a §3.1 sweep (file lines, executable body lines, imported names) of every touched file shows each exception carrying a `# rationale:`; the M1 row-9 anchor occurs once. No TypeScript changed this round.
-- Follow-up (this commit, orchestrator decision): `80bfbcc` had given `_register_search_tools()` a `# rationale:` carve-out, but the function was over 60 only because B2 lengthened three inline tool descriptions (57 executable body lines on `ecaeb28`, 64 after B2 + S1). B2 now moves those three descriptions to module-level constants and the carve-out is dropped. Re-verified on a fresh scratch replay of `ecaeb28`, every block applied in task order: `ruff check`, `ruff format --check`, `mypy src` clean; `pytest -n auto` 3571 passed; the tool descriptions are byte-identical to the inline ones `80bfbcc` specified; `_register_search_tools()` measures 34 executable body lines; the §3.1 sweep lists `mcp_server.py` only for file length (918) and imports (40 → 45), both under its header; the only touched functions over 60 are `_refine()` and `list_documents()`, each with its `# rationale:`.
+- Follow-up (this commit, orchestrator decision): `80bfbcc` had given `_register_search_tools()` a `# rationale:` carve-out; this commit moved the three lengthened descriptions to module-level constants and dropped it, on a nested-closures-count-separately reading that round 2 rejected. Re-verified on a fresh scratch replay of `ecaeb28`, every block applied in task order: `ruff check`, `ruff format --check`, `mypy src` clean; `pytest -n auto` 3571 passed; the tool descriptions are byte-identical to the inline ones `80bfbcc` specified; [superseded by round 2: `_register_search_tools()` measures 190 by §3.1's literal count]; the §3.1 sweep lists `mcp_server.py` only for file length (918) and imports (40 → 45), both under its header; [superseded by round 2: the touched functions over 60 are `_refine()`, `list_documents()` and `_register_search_tools()`, each with its `# rationale:`].
 
 Round 1 lesson-candidates:
 
@@ -4208,3 +4239,14 @@ Round 1 lesson-candidates:
 - A gate step's expected output (warning counts, skip counts) is measured on the base, never remembered.
 - A parallel-track plan names each track's branch and worktree where it creates them, so the merge task carries no `<placeholder>` and its conflict rule fits the moment it runs.
 - A type tightening reads the factory's real return type (`MagicMock`, not the class it imitates) and prefers `object` over a commented `Any` where the value is only passed through.
+
+Round 2 resolution notes:
+
+- R2-F1 → `# rationale:` above `def _register_search_tools(` (pre-existing 211 lines on `ecaeb28`, 190 on the merged replay, by §3.1's literal count); the description constants' purpose restated as shrinking the registrar; the Global Constraints §3.1 bullet, B2 prose, self-review, and the round-1 notes corrected. R2-F2 → `_client_and_headers()` returns a frozen `_ApiHarness` dataclass; both callers updated. R2-F3 → the three constants sit right after the imports (anchored on the end of the `TYPE_CHECKING` block).
+- Re-verified on a fresh scratch replay of `ecaeb28`, every block applied in task order plus the documented A1 `ruff format` fix-up: `ruff check`, `ruff format --check`, `mypy src` clean; `pytest -n auto` 3571 passed.
+
+Round 2 lesson-candidates:
+
+- A ceiling-avoidance claim states its counting convention and checks it against the guideline's literal exclusion list; a convention the guideline does not state is an interpretation, flagged as one.
+- Code moved to satisfy one rule is re-checked against its neighbours: hoisting strings to module constants triggers §3.5's placement rule.
+- A type-tightening pass also checks shape rules (§5.8 three-element tuples), not just annotations.
