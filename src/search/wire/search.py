@@ -88,15 +88,6 @@ class FilterRequest(BaseModel):
         """Accept an ISO date or timestamp; store its ``YYYY-MM-DD`` date."""
         return None if value is None else _caller_iso_date(value)
 
-    @field_validator("tag_ids")
-    @classmethod
-    def _validate_tag_ids_positive(cls, v: list[int]) -> list[int]:
-        """Reject tag_ids with non-positive values (security: ids must be > 0)."""
-        for tag_id in v:
-            if tag_id <= 0:
-                raise ValueError("tag_ids must only contain positive integers")
-        return v
-
     @model_validator(mode="after")
     def _reject_empty_tag_ids(self) -> FilterRequest:
         """Reject an explicit ``tag_ids: []`` — it names no scope at all.

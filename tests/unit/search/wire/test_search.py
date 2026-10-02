@@ -233,3 +233,9 @@ def test_filter_request_rejects_an_id_above_the_sqlite_integer_range(
 
 def test_filter_request_accepts_the_largest_sqlite_integer_id() -> None:
     assert FilterRequest(correspondent_id=2**63 - 1).correspondent_id == 2**63 - 1
+
+
+def test_filter_request_names_the_offending_tag_id_by_index() -> None:
+    """The error locates the bad element, like the sibling id fields."""
+    with pytest.raises(ValidationError, match=r"tag_ids\.1\s+Input should be greater"):
+        FilterRequest.model_validate({"tag_ids": [5, 0]})
