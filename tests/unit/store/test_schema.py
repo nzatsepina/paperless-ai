@@ -320,6 +320,7 @@ class TestDataclassImmutability:
             correspondent=None,
             document_type=None,
             tags=("a", "b"),
+            tag_ids=(),
             created=None,
         )
         with pytest.raises(FrozenInstanceError):

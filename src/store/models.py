@@ -135,6 +135,10 @@ class IndexedDocument:
         correspondent: Resolved correspondent name, or None.
         document_type: Resolved document-type name, or None.
         tags: Tuple of tag names (resolved from taxonomy).
+        tag_ids: The raw tag ids from the row's ``tag_ids`` JSON — not the
+            name-resolved list, so a tag missing from the taxonomy cannot hide
+            an id. Required, so no construction site can silently report "no
+            tags".
         created: Document date in normalised UTC ISO-8601, or None.
     """
 
@@ -143,6 +147,7 @@ class IndexedDocument:
     correspondent: str | None
     document_type: str | None
     tags: tuple[str, ...]
+    tag_ids: tuple[int, ...]
     created: str | None
 
 
@@ -246,6 +251,8 @@ class DocumentSummary:
         correspondent: Resolved correspondent name, or None.
         document_type: Resolved document-type name, or None.
         tags: Tuple of tag names resolved from taxonomy.
+        tag_ids: The raw tag ids from the row's ``tag_ids`` JSON (see
+            :class:`IndexedDocument`). Required.
         created: Document date in normalised UTC ISO-8601, or None.
         page_count: Number of pages, or None when unknown.
     """
@@ -255,6 +262,7 @@ class DocumentSummary:
     correspondent: str | None
     document_type: str | None
     tags: tuple[str, ...]
+    tag_ids: tuple[int, ...]
     created: str | None
     page_count: int | None
 

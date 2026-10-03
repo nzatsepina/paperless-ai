@@ -177,7 +177,7 @@ class TestDateFilterExcludesDecoys:
                 today=date(2025, 6, 10),
             )
 
-            chunks, _signal = retriever.retrieve(specs)
+            chunks, _signal = retriever.retrieve(specs, scope=None)
 
             returned_doc_ids = {chunk.document_id for chunk in chunks}
 

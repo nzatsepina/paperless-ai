@@ -13,19 +13,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from search.mcp_server import build_mcp_app
-from search.offload import LazySemaphore
 from store.models import DocumentSummary, KeywordHit, KeywordPage
 from tests.helpers.factories import make_search_settings
+from tests.helpers.search import build_stub_mcp_app as _build_app
 
 
-def _summary(doc_id: int = 42) -> DocumentSummary:
+def _summary(doc_id: int = 42, tag_ids: tuple[int, ...] = ()) -> DocumentSummary:
     return DocumentSummary(
         id=doc_id,
         title="Invoice 2024",
         correspondent="Acme",
         document_type="Invoice",
         tags=("tax",),
+        tag_ids=tag_ids,
         created="2024-01-01T00:00:00+00:00",
         page_count=2,
     )
@@ -41,14 +41,6 @@ def _make_core(page: KeywordPage | None = None) -> MagicMock:
     )
     core.settings = make_search_settings()
     return core
-
-
-def _build_app(core: MagicMock):
-    return build_mcp_app(
-        lambda _app_db_path: core,
-        "unused-app-db-path",
-        search_semaphore=LazySemaphore(0),
-    )
 
 
 @pytest.mark.anyio
@@ -140,3 +132,21 @@ async def test_keyword_search_sanitises_failure() -> None:
     assert result.isError is True
     error_text = " ".join(b.text for b in result.content if hasattr(b, "text"))
     assert "/var/data/paperless/index.db" not in error_text
+
+
+@pytest.mark.anyio
+async def test_keyword_search_documents_carry_tag_ids() -> None:
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    page = KeywordPage(
+        hits=(KeywordHit(document=_summary(tag_ids=(101,)), snippet="x", rank=-1.0),),
+        total=1,
+        offset=0,
+        limit=20,
+    )
+    app = _build_app(_make_core(page))
+
+    async with create_connected_server_and_client_session(app._fastmcp) as client:
+        result = await client.call_tool("keyword_search", {"query": "invoice"})
+
+    assert json.loads(result.content[0].text)["documents"][0]["tag_ids"] == [101]

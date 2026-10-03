@@ -360,7 +360,7 @@ class SearchFilters:
     tag_ids: tuple[int, ...]       # all ids must be present in documents.tag_ids
 ```
 
-Filters are applied as SQL `WHERE` clauses *before* ranking, so filtered recall is exact — there is no "KNN returned k rows, all then filtered out" failure. The date bounds compare against `date(d.created)`, which strips the stored timestamp's time and timezone, so a bare `YYYY-MM-DD` bound correctly includes any document on that date; the `tag_ids` test uses `json_each(d.tag_ids)` and requires every supplied id to be present.
+Filters are applied as SQL `WHERE` clauses *before* ranking, so filtered recall is exact — there is no "KNN returned k rows, all then filtered out" failure. The date bounds are a half-open range on the plain `d.created` column (`>= date_from`, `< date_to + 1 day`), which keeps `idx_documents_created` usable; a bare `YYYY-MM-DD` bound sorts correctly against the stored ISO timestamp, so any document on `date_to` is included; the `tag_ids` test uses `json_each(d.tag_ids)` and requires every supplied id to be present.
 
 **Source:** `store/writer.py`, `store/reader/`, `store/models.py`
 

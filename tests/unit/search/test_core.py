@@ -18,6 +18,13 @@ from a synthesiser call by the system prompt, so one driver serves the whole
 pipeline while the test asserts how many calls of each kind were made.  The
 core is assembled by ``build_search_core`` (see conftest.py): real planner,
 retriever, and synthesiser stages over mock store / embedding clients.
+
+# rationale: this file exceeds the §3.1 500-line guideline. It is the one
+# suite for the answer() call-count contract, sharing its scripted-driver
+# fixtures; source assembly already moved to test_core_sources. The
+# caller-scope change only re-targets one broaden test, and a further split
+# there would move unrelated tests and widen a leak-fix diff (spec
+# 20261002-caller-scope-hard, Risks).
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ from tests.helpers.factories import (
     make_facet_set,
     make_indexed_document,
     make_search_settings,
+    make_taxonomy_entry,
 )
 from tests.helpers.llm import (
     ScriptedLLMClient,
@@ -471,7 +479,13 @@ class TestEmptyRetrieval:
 
     def test_broaden_retry_runs_before_giving_up(self) -> None:
         """A filtered retrieval that finds nothing is retried broadened; if
-        the broadened retrieval finds chunks, synthesis proceeds normally."""
+        the broadened retrieval finds chunks, synthesis proceeds normally.
+
+        Twin-capped setup (spec D9): the planner guess resolves to a real
+        correspondent and ``SEARCH_PLANNER_MAX_SPECS=1`` leaves no room for its
+        recall twin, so the broadened search is not among pass 1's searches —
+        the only case in which broaden still runs.
+        """
         llm_client = ScriptedLLMClient(
             planner_response=planner_response_json(
                 specs=[_make_spec(correspondent="npower")]
@@ -481,7 +495,11 @@ class TestEmptyRetrieval:
             ],
         )
         store_reader = MagicMock()
-        store_reader.list_facets.return_value = make_facet_set()
+        store_reader.list_facets.return_value = make_facet_set(
+            correspondents=(
+                make_taxonomy_entry(kind="correspondent", entry_id=10, name="npower"),
+            )
+        )
         # First call (filtered) → nothing; second call (broadened) → a hit.
         store_reader.vector_search.side_effect = [
             [],
@@ -490,7 +508,7 @@ class TestEmptyRetrieval:
         store_reader.keyword_search.return_value = []
         store_reader.get_documents.return_value = [make_indexed_document()]
         core = build_search_core(
-            settings=make_search_settings(),
+            settings=make_search_settings(SEARCH_PLANNER_MAX_SPECS=1),
             llm_client=llm_client,
             store_reader=store_reader,
             embedding_client=_embedding_client(),

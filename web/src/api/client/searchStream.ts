@@ -21,12 +21,13 @@
  * Security: mirrors `client/core.ts` — `credentials: 'include'` so the signed
  * `HttpOnly` session cookie is attached; the JS bundle never sees a raw secret.
  *
- * Allowed deps: core (error types + BASE_URL), types (leaf module —
- * CODE_GUIDELINES §12.3).
+ * Allowed deps: core (error types + BASE_URL), search (toSearchRequestBody),
+ * types (leaf module — CODE_GUIDELINES §12.3).
  */
 
 import type { SearchRequest, StreamEvent } from '../types';
 import { ApiError, BASE_URL, Unauthenticated } from './core';
+import { toSearchRequestBody } from './search';
 
 /**
  * Thrown when the stream itself is malformed — a missing response body, or a
@@ -63,7 +64,7 @@ export async function streamSearch(
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: toSearchRequestBody(body),
     ...(signal ? { signal } : {}),
   });
 

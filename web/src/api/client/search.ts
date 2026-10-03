@@ -6,6 +6,7 @@
  */
 
 import type {
+  FilterRequest,
   SearchRequest,
   SearchResponse,
   FacetsResponse,
@@ -15,12 +16,33 @@ import type {
 } from '../types';
 import { BASE_URL, request } from './core';
 
+/**
+ * Serialise a search request body for the wire, omitting an empty `tag_ids`.
+ *
+ * The backend rejects an explicit `tag_ids: []` (a hard-scope filter that
+ * names no tag fails closed), while an omitted key means "no tag constraint".
+ * The UI's `FilterRequest` keeps `tag_ids` as a required array, so the
+ * omission happens here, at the wire boundary. Builds a shallow copy — `body`
+ * and `body.filters` are live UI state and are never mutated. A `null` or
+ * absent `filters` passes through unchanged.
+ */
+export function toSearchRequestBody(body: SearchRequest): string {
+  const { filters } = body;
+  if (!filters || filters.tag_ids.length > 0) {
+    return JSON.stringify(body);
+  }
+  // `delete` on a fresh copy only — the caller's `filters` is never touched.
+  const wireFilters: Partial<FilterRequest> = { ...filters };
+  delete wireFilters.tag_ids;
+  return JSON.stringify({ ...body, filters: wireFilters });
+}
+
 /** POST /api/search — run the agentic search pipeline. */
 export async function search(body: SearchRequest): Promise<SearchResponse> {
   return request<SearchResponse>(`${BASE_URL}/api/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: toSearchRequestBody(body),
   });
 }
 

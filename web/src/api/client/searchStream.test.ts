@@ -111,6 +111,16 @@ describe('streamSearch', () => {
     });
   });
 
+  it('sends no tag_ids key for an untagged search', async () => {
+    const fetchMock = mockFetch(200, streamFrom([]));
+    await streamSearch({ query: 'invoice', filters: { tag_ids: [] } });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      query: 'invoice',
+      filters: {},
+    });
+  });
+
   it('forwards an AbortSignal to fetch', async () => {
     const fetchMock = mockFetch(200, streamFrom([]));
     const controller = new AbortController();

@@ -21,6 +21,23 @@ when it sharpens, delete one that stops being true.
   downstream consumer switches on it. "Reuses the existing primitive" and
   "routes through the existing code path" are different claims — say which one
   is true.
+- **Verification commands must run as written.** A recorded `rg` command
+  using grep-BRE `\|` matched nothing, so the spec's evidence was false while
+  its claims were true. Paste commands that were actually run, with their
+  output; in a Markdown table the pipe must be escaped, so keep commands in
+  fenced blocks.
+- **Enumerate every client before deciding a boundary rule from one of
+  them.** "The SPA sends `tag_ids: []`" nearly made empty-scope rejection
+  MCP-only, leaving API-key HTTP callers unscoped. Check every surface that
+  reaches the model (auth scopes, docs naming programmatic keys).
+- **Probe the container, not just its contents.** A strict inner model is
+  worthless if the outer request / tool-argument layer ignores a mis-keyed
+  container (`filter` for `filters`). Probe one level up, on every surface.
+- **State dedup-loop triggers by key, not by count**, and a skip branch lists
+  every incidental retry it removes.
+- **§3.1 function length counts nested closures** (the exclusion list is
+  closed). A plan that grows an already-over function needs the
+  pre-existing-cause `# rationale:`, not a claim that it is under the limit.
 
 ## Fail-safe / untrusted-input code
 
@@ -34,6 +51,14 @@ when it sharpens, delete one that stops being true.
   spins with no output would hang a worker because the deadline sat only on
   `wait()`, not on a `select`-based read. Any subprocess over untrusted input
   needs a read-deadline **and** a hard output cap (decompression-bomb defence).
+- **A hard-constraint contract needs strict input types.** Pydantic's lax
+  mode turned `true`, `"5"` and `5.0` into real ids, so a malformed tenant
+  filter scoped the search to the *wrong* tenant instead of failing closed.
+  Use `StrictInt` with explicit bounds (`gt=0`, the storage max) and validate
+  date sentinels (`date.max` overflows `+1 day`).
+- **Recall-insurance layers (twins, broaden, safety nets) need a stated rule
+  about which constraints they may relax.** Caller filters are never relaxable;
+  enforce that at one choke point so a future relaxation path cannot regress it.
 
 ## Implementation review
 
@@ -45,6 +70,13 @@ when it sharpens, delete one that stops being true.
 - **Prefer a pair or a dataclass to a 3-tuple return** (CODE_GUIDELINES.md
   §5.8). A three-or-more positional unpack at the call site is a review finding
   on sight; the module usually already has a frozen dataclass to reach for.
+- **A mock that returns fewer results than calls hides extra passes.** An
+  embedder mock returning one vector for two specs let `zip` drop the leaking
+  twin, so the test passed while production leaked. Size mocks to the call
+  count, or test against a real store.
+- **A contract change sweeps every human doc stating the old contract**, not
+  only the doc the spec authorised (module tables and sibling docs included);
+  route out-of-authority docs to the PR body.
 
 ## Mutation testing
 

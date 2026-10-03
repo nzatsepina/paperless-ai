@@ -22,6 +22,7 @@ def test_document_summary_carries_page_count() -> None:
         correspondent="Alpha Corp",
         document_type="Invoice",
         tags=("important",),
+        tag_ids=(),
         created="2024-01-01T00:00:00+00:00",
         page_count=3,
     )
@@ -37,6 +38,7 @@ def test_document_summary_is_frozen() -> None:
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=None,
     )
@@ -72,6 +74,7 @@ def test_document_page_carries_rows_and_total() -> None:
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=None,
     )

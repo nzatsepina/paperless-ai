@@ -6,6 +6,12 @@ cross a stage boundary.
 
 No stage imports Pydantic; validation happens only at the HTTP boundary in
 api.py (CODE_GUIDELINES.md §5.6).
+
+# rationale: this file exceeds the §3.1 500-line guideline. It holds only the
+# pipeline's frozen I/O dataclasses (one derived property, no other behaviour);
+# every stage imports its shapes from this one module and the shapes reference
+# each other, so splitting it would add re-export edges (forbidden by the
+# no-barrel rule).
 """
 
 from __future__ import annotations
@@ -149,6 +155,10 @@ class SourceDocument:
         relevance_tier: Qualitative match strength — "strong" / "good" /
             "partial" / "weak" — derived from the document's absolute vector
             similarity. What the UI renders as the relevance badge.
+        tag_ids: The document's raw tag ids, so a caller can verify its tag
+            scope held. ``None`` — unknown, not "no tags" — when the index row
+            was pruned between retrieval and assembly; ``()`` means the
+            document has no tags.
     """
 
     document_id: int
@@ -160,6 +170,7 @@ class SourceDocument:
     paperless_url: str
     score: float
     relevance_tier: RelevanceTier = "good"
+    tag_ids: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

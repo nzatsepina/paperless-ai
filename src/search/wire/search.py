@@ -5,16 +5,26 @@ them and the internal :mod:`search.models` dataclasses. This is one of the
 boundary modules of the :mod:`search.wire` package — Pydantic lives here and at
 the other wire modules, never in the pipeline (``CODE_GUIDELINES.md`` §5.6).
 
-Allowed deps: pydantic, search.models, store (SearchFilters).
+Allowed deps: pydantic, search.models, search.dates (normalise_iso_date),
+    store (SearchFilters).
 Forbidden: FastAPI, sqlite3, any I/O.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
+from search.dates import normalise_iso_date
 from search.models import NoMatchReason
 from store import SearchFilters
 
@@ -36,6 +46,13 @@ MAX_QUERY_LENGTH = 4000
 # at both surfaces via :func:`normalise_query`.
 MIN_QUERY_LENGTH = 1
 
+# SQLite's INTEGER is a signed 64-bit value: a larger id cannot be bound (the
+# driver raises OverflowError, which would surface as a 500 / "search failed"
+# instead of a clear rejection).  A filter id is a strict positive integer
+# within that range.
+_MAX_ID = 2**63 - 1
+_FilterId = Annotated[StrictInt, Field(gt=0, le=_MAX_ID)]
+
 
 # ---------------------------------------------------------------------------
 # Request models
@@ -45,19 +62,67 @@ MIN_QUERY_LENGTH = 1
 class FilterRequest(BaseModel):
     """Optional filters supplied in a search request (spec §7.1).
 
-    Every field defaults to absent; only the fields present in the request body
-    are forwarded to the pipeline.  Extra keys are ignored — both the HTTP and
-    the MCP boundary are lenient on unrecognised fields.
+    The caller's filters are a hard search scope, so a malformed one fails
+    closed (CODE_GUIDELINES §1.11) instead of silently widening the search:
+    an unknown key (``tag_id`` for ``tag_ids``), a ``date_from`` / ``date_to``
+    that is not an ISO date (or is 9999-12-31), an explicitly empty
+    ``tag_ids``, more than 64 ``tag_ids`` and an id that is not a positive
+    integer (or is above 2**63-1) are all rejected.  This one model is the parse for
+    both the HTTP and the MCP boundary, so the rules hold identically on both.
+    An omitted field means "no constraint"; multiple ``tag_ids`` are ANDed (every id required).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     date_from: str | None = None
     date_to: str | None = None
-    correspondent_id: int | None = None
-    document_type_id: int | None = None
+    correspondent_id: _FilterId | None = None
+    document_type_id: _FilterId | None = None
     # Bounded to 64 to match the GET ``/api/documents`` counterpart
     # (``routes.py``); a filter naming more tags than any real instance holds
     # is malformed, and an unbounded list is a cheap payload-bloat vector.
-    tag_ids: list[int] = Field(default_factory=list, max_length=64)
+    tag_ids: list[_FilterId] = Field(default_factory=list, max_length=64)
+
+    @field_validator("date_from", "date_to")
+    @classmethod
+    def _require_iso_date(cls, value: str | None) -> str | None:
+        """Accept an ISO date or timestamp; store its ``YYYY-MM-DD`` date."""
+        return None if value is None else _caller_iso_date(value)
+
+    @model_validator(mode="after")
+    def _reject_empty_tag_ids(self) -> FilterRequest:
+        """Reject an explicit ``tag_ids: []`` — it names no scope at all.
+
+        ``model_fields_set`` tells an explicit empty list from an omitted key,
+        which keeps its ``[]`` default and means "no tag constraint".
+        """
+        if "tag_ids" in self.model_fields_set and not self.tag_ids:
+            raise ValueError("tag_ids must not be empty; omit it for no tag constraint")
+        return self
+
+
+def _caller_iso_date(value: str) -> str:
+    """Return the ``YYYY-MM-DD`` date of an ISO date or timestamp, or raise.
+
+    Three checks, each closing a gap the others leave: :func:`normalise_iso_date`
+    validates only the first ten characters (``"2025-04-25junk"`` passes it);
+    ``datetime.fromisoformat`` accepts compact and week forms (``"20250425"``,
+    ``"2025-W17-5"``) the store's lexical date comparison cannot use; requiring
+    the parsed date to equal the ten-character prefix rejects the week form,
+    which passes the first two.
+    """
+    date_part = normalise_iso_date(value)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        parsed = None
+    if date_part is None or parsed is None or parsed.date().isoformat() != date_part:
+        raise ValueError("must be an ISO date (YYYY-MM-DD) or ISO timestamp")
+    if parsed.date() == date.max:
+        # The store's half-open upper bound is "the next day", which does not
+        # exist for the last representable date and would crash the search.
+        raise ValueError("must be an ISO date before 9999-12-31")
+    return date_part
 
 
 def normalise_query(query: str) -> str:
@@ -90,7 +155,13 @@ def normalise_query(query: str) -> str:
 
 
 class SearchRequest(BaseModel):
-    """Body for POST /api/search."""
+    """Body for POST /api/search and /api/search/stream.
+
+    ``extra="forbid"``: a mis-keyed container (``filter`` for ``filters``)
+    would otherwise read as "no filters" and run an unscoped search.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     # max_length bounds the *raw* payload before trimming so an enormous
     # all-whitespace body is rejected by the cheap Pydantic constraint without

@@ -106,7 +106,7 @@ flowchart TD
         T2 --> T3[RRF fusion across ALL ranked lists\nscore = Σ 1 / 60 + rank]
         T3 --> T4[Top-K documents by best-chunk score\ncapped chunks per doc]
         T4 --> T5{chunks empty?}
-        T5 -- yes, first try --> T6[broaden: drop all filters\nretry once]
+        T5 -- yes, first try --> T6[broaden: drop planner guesses\nkeep caller filters\nretry once unless it repeats pass 1]
         T6 --> T7{chunks empty\nafter broaden?}
         T7 -- yes --> NM0([no_match result])
         T7 -- no --> GATE
@@ -291,6 +291,27 @@ on the planner phrasing things correctly.
 - `correspondent_id` / `document_type_id` → UI value wins when set.
 - `tag_ids` → order-stable de-duplicated union (all required).
 
+**Caller filters are a hard scope.** The filters a caller sends — the MCP
+`filters` argument or the HTTP request body's `filters` — narrow every search
+and are never relaxed. Recall insurance (the twins below, broaden-and-retry,
+the refinement re-plan) strips only what the *planner* guessed. As a second
+line of defence, `Retriever.retrieve(specs, scope=ui_filters)` re-applies
+`_intersect()` to every spec immediately before each store call, so a future
+relaxation path cannot widen a scoped search either. (`keyword_search` never
+enters the retriever; its filters go straight to the store.)
+
+Multiple `tag_ids` are **ANDed**: a document must carry every listed tag. There
+is no any-of form.
+
+A malformed caller filter is rejected at the boundary, never ignored: an unknown
+key (`tag_id` for `tag_ids`), a mis-keyed container (`filter` for `filters`), a
+`date_from` / `date_to` that is not an ISO date, an explicitly empty
+`tag_ids`, or an id (`correspondent_id`, `document_type_id`, a `tag_ids` element)
+that is not a positive JSON integer (`true`, `"5"`, `5.0`, `0`, a negative or
+beyond SQLite's integer range) is a 422 over HTTP and a tool error over MCP. A
+numeric-string id that used to be coerced is therefore rejected too. An omitted
+`tag_ids` still means "no tag constraint".
+
 #### Deterministic date safety net
 
 After all specs are resolved, if **none** of them carries a date filter but the
@@ -301,20 +322,35 @@ extracted date range, then intersected with `ui_filters`.  The original
 (date-unbound) spec remains, preserving recall.  This fires only on the degraded
 path — the normal planner already binds at least one spec to a date.
 
+#### Recall twins (planner guesses only)
+
+When `resolve_specs()` is given `max_specs` (pass 1 and the refinement re-plan),
+every resolved spec that carries a filter gains a *twin*: the same query with
+the planner's guesses stripped but the caller's filters kept
+(`_intersect(_EMPTY_FILTERS, ui_filters)`). A wrong planner guess would
+otherwise silently exclude the answer; the twin still retrieves it, and RRF
+rewards a document both find. A spec whose only filters are the caller's yields
+a twin identical to itself, which the retrieval-identity dedup drops — so a
+caller-scoped `semantic_search` runs no extra search. Originals always survive
+and count toward `SEARCH_PLANNER_MAX_SPECS`; twins fill only the room left, so a
+plan already at the cap gets none.
+
 #### SQL date filter correctness
 
 `store/reader/_filters.py` — `build_filters()` translates `date_from` /
-`date_to` to:
+`date_to` to a half-open range on the plain column:
 
 ```sql
-date(d.created) >= ?
-date(d.created) <= ?
+d.created >= ?   -- date_from
+d.created < ?    -- date_to + 1 day, from _exclusive_upper_bound()
 ```
 
-The `date()` wrapper strips the time and timezone from the stored full ISO-8601
-timestamp (e.g. `"2025-04-25T00:00:00+00:00"`) before comparison.  Without it a
-bare `YYYY-MM-DD` bound would fail a naïve lexicographic comparison against a
-stored timestamp because the `T…` suffix sorts after a bare date string.
+Documents store a full ISO-8601 timestamp (e.g. `"2025-04-25T00:00:00+00:00"`).
+A bare `YYYY-MM-DD` lower bound compares correctly against it lexicographically,
+because `"2025-04-25T…"` sorts after `"2025-04-25"`. The upper bound is advanced
+by one day so every timestamp on `date_to` is included. The column is never
+wrapped in `date()`, which would make the predicate non-sargable and bypass the
+`idx_documents_created` index.
 
 ---
 
@@ -377,10 +413,20 @@ or `None` when the chunk was found by keyword search alone.
 #### Broaden-and-retry
 
 When the first retrieval pass returns an empty list, the core retries once with
-all filter guesses dropped (`broaden_plan()` clears every spec's `filter_guess`,
-and the broadened pass is resolved with `ui_filters=None`).  A user-set filter is
-not the cause of a mis-resolved planner filter, so it is dropped too.  This retry
-fires once per query, never recursively.
+every planner guess dropped (`broaden_plan()` clears every spec's
+`filter_guess`) and the caller's filters kept: the broadened pass is resolved
+with the same `ui_filters`.  This reverses the upstream design, which dropped a
+user-set filter too on the grounds that it is not the cause of a mis-resolved
+planner filter: a caller that keeps tenants apart by tag relies on that filter,
+and silently broadening past it returned other tenants' documents.
+
+If every broadened search already ran in pass 1 — always true for a scoped
+`semantic_search`, whose pass-1 specs already are the scope-only searches (each
+twin collapses into its original) — the retry
+would repeat pass 1, so it is skipped and the trace reports
+`broadened: false`.  In practice broaden now fires only when
+`SEARCH_PLANNER_MAX_SPECS` cut off a twin.  The retry fires once per query,
+never recursively.
 
 #### RetrievalSignal
 
@@ -919,7 +965,7 @@ decision to the stage that reads the evidence is more reliable.
 |:---|:---|
 | `core.py` | `SearchCore` — the bounded orchestrator: gates, the six-stage pipeline, the refinement loop, the LLM-call budget, and result assembly wiring |
 | `planner.py` | `QueryPlanner` — turns a query into a `RetrievalPlan`; the Layer 1 adequacy gate; the re-planner |
-| `retriever.py` | `resolve_specs` + `Retriever` — name/date resolution, the date safety net, per-spec fan-out, RRF fusion, broaden-and-retry |
+| `retriever.py` | `resolve_specs` + `Retriever` — name/date resolution, the date safety net, recall twins (planner guesses only), per-spec fan-out under the caller-scope choke point, RRF fusion |
 | `dates.py` | `extract_date_range` / `normalise_iso_date` — the deterministic date parser |
 | `judge.py` | `RelevanceJudge` — the cheap per-document relevance screen, fail-open |
 | `synthesizer.py` | `Synthesizer` — writes the answer from chunks; evidence-gating; the nonce-fenced data region |
@@ -928,4 +974,4 @@ decision to the stage that reads the evidence is more reliable.
 | `refinement.py` | `broaden_plan` / `merge_chunks` / `trivial_plan` — the pure helpers behind broaden, refine, and the trivial-query skip |
 | `prompts.py` | The planner, judge, and synthesiser system prompts and user-message builders |
 | `models.py` | The pipeline's data types — `RetrievalPlan`, `RetrievalSpec`, `RetrievedChunk`, `JudgeVerdict`, `SearchResult`, … |
-| `store/reader/_filters.py` | `build_filters` — translates resolved filters (including the `date()`-wrapped date bounds) into SQL |
+| `store/reader/_filters.py` | `build_filters` — translates resolved filters into SQL (date bounds as a half-open range on the plain `d.created` column) |

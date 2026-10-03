@@ -26,6 +26,7 @@ def _summary(doc_id: int, title: str, pages: int) -> DocumentSummary:
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=pages,
     )

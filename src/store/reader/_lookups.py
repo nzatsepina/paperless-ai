@@ -8,6 +8,12 @@ Each function takes the connection and the StoreReader's query lock by
 argument; :class:`~store.reader.StoreReader` is the facade that owns them.
 
 Allowed deps: sqlite3, json, store.models, store._sql, store.migrations.
+
+# rationale: this file exceeds the §3.1 500-line guideline. Every function here
+# is one non-ranked read sharing the connection/query-lock contract and the
+# tag-id parsing and name-resolution helpers (``_parse_tag_ids``,
+# ``_resolve_tag_names``) that ``_browse`` also imports; a split would separate
+# reads from the helpers they share.
 """
 
 from __future__ import annotations
@@ -137,6 +143,7 @@ def get_documents(
                 correspondent=row["correspondent_name"],
                 document_type=row["document_type_name"],
                 tags=tag_names,
+                tag_ids=tuple(tag_ids),
                 created=row["created"],
             )
         )
@@ -634,6 +641,7 @@ def get_document_summary(
         correspondent=row["correspondent_name"],
         document_type=row["document_type_name"],
         tags=tag_names,
+        tag_ids=tuple(tag_ids),
         created=row["created"],
         page_count=row["page_count"],
     )

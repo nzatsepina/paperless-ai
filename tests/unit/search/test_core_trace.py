@@ -9,6 +9,12 @@ the pipeline byte-identical bar the now-populated trace/cost on the result.
 These tests reuse the scripted-LLM wiring from :mod:`test_core` (``build_search_core``
 with a ``ScriptedLLMClient``): the trace is asserted from the emitted events and
 from ``result.stats.trace`` so the two are pinned to agree.
+
+# rationale: this file exceeds the §3.1 500-line guideline. Every test drives
+# one pipeline and asserts the per-phase events and the assembled trace
+# against each other, through one set of builders. The caller-scope change
+# only re-targets one broaden test, and a split there would move unrelated
+# tests and widen a leak-fix diff (spec 20261002-caller-scope-hard, Risks).
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from tests.helpers.factories import (
     make_index_stats,
     make_indexed_document,
     make_search_settings,
+    make_taxonomy_entry,
 )
 from tests.helpers.llm import (
     ScriptedLLMClient,
@@ -250,7 +257,13 @@ class TestRetrieveDetail:
             ],
         )
         store_reader = MagicMock()
-        store_reader.list_facets.return_value = make_facet_set()
+        # Twin-capped (spec D9): "npower" resolves and SEARCH_PLANNER_MAX_SPECS=1
+        # leaves no room for its recall twin, so broaden still differs from pass 1.
+        store_reader.list_facets.return_value = make_facet_set(
+            correspondents=(
+                make_taxonomy_entry(kind="correspondent", entry_id=10, name="npower"),
+            )
+        )
         store_reader.vector_search.side_effect = [
             [],
             [make_chunk_hit(chunk_id=1, document_id=1)],
@@ -261,7 +274,7 @@ class TestRetrieveDetail:
             document_count=3, chunk_count=10
         )
         core = build_search_core(
-            settings=make_search_settings(),
+            settings=make_search_settings(SEARCH_PLANNER_MAX_SPECS=1),
             llm_client=llm_client,
             store_reader=store_reader,
             embedding_client=_embedding_client(),

@@ -363,3 +363,35 @@ Fixed by patching both boundaries. `_patch_fetch` in the test module is the one 
 them; it sniffs no version, patching both names unconditionally, so half is inert on any given
 release. It is shared by the `fetches` fixture and `test_a_malformed_key_set_does_not_raise`.
 **Affects:** `tests/unit/search/test_access_jwt.py`, `pyproject.toml`, `.claude/docs/TESTING.md`
+
+## 2026-10-02 — Caller filters are a hard search scope; recall insurance relaxes only planner filters
+
+Reverses the upstream design that dropped a user-set filter during broaden-and-retry
+(`docs/search-pipeline.md` said a user filter "is dropped too"). Three recall-insurance paths —
+filter-stripped twins, broaden-and-retry, and refinement twins — also stripped the *caller's*
+filters, so a caller keeping tenants apart by tag got other tenants' documents fused into a
+tag-scoped `semantic_search`, with no way to detect it. Caller filters are now a hard scope; the
+insurance strips planner guesses only. Defence in depth: `Retriever.retrieve(specs, *, scope)`
+re-intersects every spec with the scope before any store call, so a future relaxation path (or an
+upstream merge re-adding one) cannot reopen the leak; `keyword_search` never enters the retriever
+and is held by test only. Malformed caller filters fail closed on MCP and HTTP — unknown keys, a
+mis-keyed `filters` container (enforced over MCP by `_StrictFastMCP`, since FastMCP itself drops
+undeclared arguments and does not enforce its schema), non-ISO dates and an explicit empty
+`tag_ids`; the SPA stops sending `tag_ids: []`. Results carry raw `tag_ids` (`None` for a row
+pruned mid-request). Multiple `tag_ids` stay ANDed. A broaden whose searches all ran in pass 1 is
+skipped, which nearly retires broaden (it fires only when `SEARCH_PLANNER_MAX_SPECS` cut a twin)
+and removes its incidental second embedding call; retrying a transient embedding failure belongs
+to the client's own retry. At plan time the date rule was tightened beyond the spec's two checks:
+the ISO week form (`2025-W17-5`) passes both, so the parsed date must also equal the
+ten-character prefix. Round 1 of the review gate extended D3 to ids: a correspondent, document
+type or tag id must be a strict positive integer within SQLite's range, because `true` coerced to
+`1` and selected another tenant's tag; a numeric-string id that used to resolve is now rejected.
+Rejected: a per-site fix without a choke point; keeping the old semantics
+for the web UI; an MCP-only empty-`tag_ids` rule; making `tag_ids` optional in the SPA's UI state.
+**Spec:** `.claude/specs/20261002-caller-scope-hard.md`
+**Affects:** `src/search/retriever.py`, `src/search/core.py`, `src/search/wire/search.py`, `src/search/mcp_server.py`, `src/store/models.py`, `src/store/reader/_lookups.py`, `src/store/reader/_browse.py`, `src/search/models.py`, `src/search/sources.py`, `web/src/api/client/search.ts`, `web/src/api/client/searchStream.ts`, `docs/search-pipeline.md`
+
+## 2026-10-03 — Caller-scope filter bounds (follow-up)
+**Decision:** `FilterRequest` additionally rejects more than 64 `tag_ids` (matches the GET `/api/documents` cap), ids above 2**63-1 (SQLite INTEGER range) and the date 9999-12-31. **Why:** `date_to` + 1 day overflows at 9999-12-31 and an unbindable id would error inside the store instead of failing closed at the boundary. Docs (`docs/search.md`, `docs/search-pipeline.md`, `docs/store.md`) now describe the half-open `d.created` date range and `tag_ids` on results.
+**Spec:** `.claude/specs/20261002-caller-scope-hard.md`
+**Affects:** `src/search/wire/search.py`, `docs/search.md`, `docs/search-pipeline.md`, `docs/store.md`

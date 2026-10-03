@@ -134,7 +134,7 @@ def test_document_hit_by_two_specs_outranks_single_spec_hit() -> None:
     retriever = _retriever(store)
     specs = (_spec(semantic="q1"), _spec(semantic="q2"))
 
-    chunks, _ = retriever.retrieve(specs)
+    chunks, _ = retriever.retrieve(specs, scope=None)
 
     score_by_doc = {c.document_id: c.rrf_score for c in chunks}
     assert score_by_doc[10] > score_by_doc[20]
@@ -171,7 +171,7 @@ def test_each_spec_passes_its_own_filters_to_the_store() -> None:
         _spec(mode="keyword", semantic=None, keywords=("kw",), filters=filters_kw),
     )
 
-    retriever.retrieve(specs)
+    retriever.retrieve(specs, scope=None)
 
     by_query = {query: filters for _, query, filters in store.calls}
     assert by_query["alpha"] is filters_a
@@ -201,7 +201,7 @@ def test_per_document_chunk_cap_keeps_highest_scoring_chunks() -> None:
     )
     retriever = _retriever(store, SEARCH_MAX_CHUNKS_PER_DOC=3)
 
-    chunks, _ = retriever.retrieve((_spec(semantic="q"),))
+    chunks, _ = retriever.retrieve((_spec(semantic="q"),), scope=None)
 
     doc_chunks = [c for c in chunks if c.document_id == 10]
     assert len(doc_chunks) == 3
@@ -220,7 +220,7 @@ def test_returns_at_most_top_k_documents_sorted_by_score() -> None:
     )
     retriever = _retriever(store, SEARCH_TOP_K=2)
 
-    chunks, _ = retriever.retrieve((_spec(semantic="q"),))
+    chunks, _ = retriever.retrieve((_spec(semantic="q"),), scope=None)
 
     document_ids = {c.document_id for c in chunks}
     assert len(document_ids) <= 2
@@ -238,7 +238,7 @@ def test_empty_specs_yield_empty_result_and_default_signal() -> None:
     store = _FakeStoreReader()
     retriever = _retriever(store)
 
-    chunks, signal = retriever.retrieve(())
+    chunks, signal = retriever.retrieve((), scope=None)
 
     assert chunks == []
     assert signal == RetrievalSignal(best_vector_similarity=None, has_keyword_hit=False)
@@ -253,7 +253,7 @@ def test_no_hits_yield_empty_result_and_default_signal() -> None:
         _spec(mode="keyword", semantic=None, keywords=("kw",)),
     )
 
-    chunks, signal = retriever.retrieve(specs)
+    chunks, signal = retriever.retrieve(specs, scope=None)
 
     assert chunks == []
     assert signal.best_vector_similarity is None
@@ -279,7 +279,7 @@ def test_keyword_only_chunk_has_no_vector_similarity_vector_chunk_does() -> None
         _spec(mode="keyword", semantic=None, keywords=("kw",)),
     )
 
-    chunks, signal = retriever.retrieve(specs)
+    chunks, signal = retriever.retrieve(specs, scope=None)
 
     similarity_by_chunk = {c.chunk_id: c.vector_similarity for c in chunks}
     assert similarity_by_chunk[2] is None

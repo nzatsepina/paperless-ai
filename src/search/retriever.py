@@ -2,7 +2,8 @@
 
 Searches each :class:`~search.models.RetrievalSpec` independently — vector
 search for a semantic spec, keyword search for a keyword spec, each with the
-spec's own resolved ``SearchFilters`` — then fuses every ranked list across all
+spec's own resolved ``SearchFilters`` intersected with the caller's scope
+(``Retriever.retrieve(specs, scope=...)``, the hard-scope choke point) — then fuses every ranked list across all
 specs with Reciprocal Rank Fusion (RRF).  Returns the top-K documents' chunks,
 capped per document and ordered by fused score.
 
@@ -390,19 +391,20 @@ def resolve_specs(
             deterministic date extractor after resolution to power the safety
             net.  Defaults to ``""`` (safety net disabled) so callers that do
             not need the safety net — such as the broadened retrieval pass,
-            which deliberately drops all date filters — can omit it.
-        max_specs: When set, enables the unfiltered recall-twin pass after the
-            safety net: every resolved spec that carries a filter gains a
-            filter-stripped twin (deduped on retrieval identity). Only twins are
-            bounded by ``max_specs`` — originals (including a safety-net spec)
-            always survive, so the total can be ``max_specs + 1`` when the
-            safety net also fired. ``None`` (the default) disables twinning, so
-            the broadened pass — which already drops all filters — is unaffected.
+            which deliberately drops the planner's date guesses — can omit it.
+        max_specs: When set, enables the recall-twin pass after the safety net:
+            every resolved spec that carries a filter gains a twin with the
+            planner's guesses stripped and *ui_filters* kept (deduped on
+            retrieval identity). Only twins are bounded by ``max_specs`` —
+            originals (including a safety-net spec) always survive, so the total
+            can be ``max_specs + 1`` when the safety net also fired. ``None``
+            (the default) disables twinning, so the broadened pass — which
+            already strips every planner guess — is unaffected.
 
     Returns:
         One :class:`~search.models.RetrievalSpec` per planned spec, in order,
         plus an optional safety-net spec and, when ``max_specs`` is set, the
-        deduped unfiltered twins.
+        deduped recall twins.
     """
     resolved: list[RetrievalSpec] = []
     for spec in plan.specs:
@@ -418,7 +420,7 @@ def resolve_specs(
             )
 
     if max_specs is not None:
-        resolved = _append_unfiltered_twins(resolved, max_specs)
+        resolved = _append_recall_twins(resolved, max_specs, ui_filters)
 
     return tuple(resolved)
 
@@ -456,17 +458,22 @@ def _retrieval_key(spec: RetrievalSpec) -> tuple[object, ...]:
     return (spec.mode, spec.semantic, spec.keywords, spec.filters)
 
 
-def _append_unfiltered_twins(
-    resolved: list[RetrievalSpec], max_specs: int
+def _append_recall_twins(
+    resolved: list[RetrievalSpec],
+    max_specs: int,
+    ui_filters: SearchFilters | None,
 ) -> list[RetrievalSpec]:
-    """Append a filter-stripped twin of each filtered spec (deduped, capped).
+    """Append a planner-filter-stripped twin of each filtered spec (deduped, capped).
 
-    Recall insurance: a wrong filter silently *excludes* the answer, and the
-    tightest spec is the most filtered.  Each filtered spec gains a twin with the
-    same query but no filters, so whatever a filter excluded is still retrieved;
-    if the filter was right, RRF fusion rewards the document found by both the
-    filtered spec and its twin.  The twin is the *same query* with filters off,
-    so it cannot drift off-topic — it only re-admits what a filter removed.
+    Recall insurance against the *planner*: a wrong planner guess silently
+    *excludes* the answer, and the tightest spec is the most filtered.  Each
+    filtered spec gains a twin with the same query and the planner's guesses
+    stripped, so whatever a guess excluded is still retrieved; if the guess was
+    right, RRF fusion rewards the document found by both.  The caller's
+    *ui_filters* are a hard scope, not a guess, so the twin keeps them: its
+    filters are ``_intersect(_EMPTY_FILTERS, ui_filters)``.  A spec whose only
+    filters are the caller scope therefore yields a twin equal to itself, which
+    the dedup below drops.
 
     Dedup is on retrieval identity (mode, query, keywords, filters), so a twin
     identical to an existing unfiltered spec is dropped, and rationale text never
@@ -480,7 +487,7 @@ def _append_unfiltered_twins(
             break
         if not _has_filter(spec.filters):
             continue
-        twin = replace(spec, filters=_EMPTY_FILTERS)
+        twin = replace(spec, filters=_intersect(_EMPTY_FILTERS, ui_filters))
         key = _retrieval_key(twin)
         if key in seen:
             continue
@@ -786,6 +793,8 @@ class Retriever:
     def retrieve(
         self,
         specs: tuple[RetrievalSpec, ...],
+        *,
+        scope: SearchFilters | None,
     ) -> tuple[list[RetrievedChunk], RetrievalSignal]:
         """Search every spec independently, fuse across specs, return top-K chunks.
 
@@ -806,15 +815,24 @@ class Retriever:
         vector passes (None when no vector pass returned a hit) and
         ``has_keyword_hit`` is True when any keyword pass returned rows.
 
+        *scope* is the caller's hard filter scope, re-applied here to every
+        spec with :func:`_intersect` before any store call — the one choke point
+        no relaxation path (recall twins, broaden-and-retry, refinement) can
+        bypass.  ``_intersect`` is idempotent, so an already-scoped spec is
+        unchanged.  Keyword-only, with no default, so no call site can omit it
+        by accident.
+
         Args:
             specs: The resolved retrieval specs (from ``resolve_specs``).
+            scope: The caller's filters (``ui_filters``), or ``None`` for an
+                unscoped caller.
 
         Returns:
             A 2-tuple ``(chunks, signal)`` — *chunks* sorted by rrf_score
             descending (empty when nothing was found), *signal* capturing
             pre-fusion quality.
         """
-        passes = self._run_passes(specs)
+        passes = self._run_passes(specs, scope)
 
         best_vector_similarity = _distance_to_similarity(passes.best_vector_distance)
         signal = RetrievalSignal(
@@ -845,13 +863,15 @@ class Retriever:
         )
         return chunks, signal
 
-    def _run_passes(self, specs: tuple[RetrievalSpec, ...]) -> _RetrievalPasses:
+    def _run_passes(
+        self, specs: tuple[RetrievalSpec, ...], scope: SearchFilters | None
+    ) -> _RetrievalPasses:
         """Run each spec's store search and collect the ranked lists and signals.
 
         Semantic specs are embedded together in one batch and each embedding is
-        searched with its own spec's filters; keyword specs are searched
-        directly.  Returns the accumulated ranked lists plus the absolute
-        vector signals RRF discards.
+        searched with its own spec's filters intersected with *scope*; keyword
+        specs are searched likewise.  Returns the accumulated ranked lists plus
+        the absolute vector signals RRF discards.
         """
         per_spec_k = self._settings.SEARCH_PER_SPEC_K
         ranked_lists: list[list[ChunkHit]] = []
@@ -872,7 +892,9 @@ class Retriever:
         # _embed_queries returns [] on failure; zip then yields nothing, so a
         # dead embedding backend simply contributes no vector passes.
         for spec, embedding in zip(semantic_specs, embeddings):
-            hits = self._store_reader.vector_search(embedding, per_spec_k, spec.filters)
+            hits = self._store_reader.vector_search(
+                embedding, per_spec_k, _intersect(spec.filters, scope)
+            )
             if not hits:
                 continue
             ranked_lists.append(hits)
@@ -889,7 +911,7 @@ class Retriever:
             if spec.mode != "keyword" or not spec.keywords:
                 continue
             hits = self._store_reader.keyword_search(
-                list(spec.keywords), per_spec_k, spec.filters
+                list(spec.keywords), per_spec_k, _intersect(spec.filters, scope)
             )
             if hits:
                 has_keyword_hit = True

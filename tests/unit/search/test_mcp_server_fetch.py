@@ -60,6 +60,7 @@ def _make_core(docs: dict[int, dict]) -> tuple[MagicMock, _StubClient]:
         correspondent=None,
         document_type=None,
         tags=(),
+        tag_ids=(),
         created=None,
         page_count=1,
     )
