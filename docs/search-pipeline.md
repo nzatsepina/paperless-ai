@@ -338,17 +338,19 @@ plan already at the cap gets none.
 #### SQL date filter correctness
 
 `store/reader/_filters.py` — `build_filters()` translates `date_from` /
-`date_to` to:
+`date_to` to a half-open range on the plain column:
 
 ```sql
-date(d.created) >= ?
-date(d.created) <= ?
+d.created >= ?   -- date_from
+d.created < ?    -- date_to + 1 day, from _exclusive_upper_bound()
 ```
 
-The `date()` wrapper strips the time and timezone from the stored full ISO-8601
-timestamp (e.g. `"2025-04-25T00:00:00+00:00"`) before comparison.  Without it a
-bare `YYYY-MM-DD` bound would fail a naïve lexicographic comparison against a
-stored timestamp because the `T…` suffix sorts after a bare date string.
+Documents store a full ISO-8601 timestamp (e.g. `"2025-04-25T00:00:00+00:00"`).
+A bare `YYYY-MM-DD` lower bound compares correctly against it lexicographically,
+because `"2025-04-25T…"` sorts after `"2025-04-25"`. The upper bound is advanced
+by one day so every timestamp on `date_to` is included. The column is never
+wrapped in `date()`, which would make the predicate non-sargable and bypass the
+`idx_documents_created` index.
 
 ---
 

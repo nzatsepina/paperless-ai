@@ -205,7 +205,7 @@ The MCP endpoint lets an AI agent treat your archive as a tool. It uses the `Fas
 
 Recommended flow: call `list_filters` once to learn the valid ids → `semantic_search` for a natural-language question or `keyword_search` for exact terms / enumeration → `fetch_documents` to read a whole document → `deep_search` only when the agent genuinely cannot answer from the sources itself.
 
-**Filters.** Every search tool takes the same optional, **ID-based** `filters` object (discover the ids with `list_filters`; there is no name resolution at this boundary). Unknown keys are ignored:
+**Filters.** Every search tool takes the same optional, **ID-based** `filters` object (discover the ids with `list_filters`; there is no name resolution at this boundary). The filters are a **hard scope**: no server path relaxes them, and several `tag_ids` mean a document must carry all of them. A malformed filter is rejected with a clear error rather than ignored — an unknown key, a mis-spelled `filters` argument, a date that is not `YYYY-MM-DD` (or an ISO-8601 timestamp, stored as its date), an explicitly empty `tag_ids`, or an id that is not a positive integer — as a tool error over MCP and HTTP 422 over the HTTP API:
 
 ```json
 {
@@ -217,8 +217,8 @@ Recommended flow: call `list_filters` once to learn the valid ids → `semantic_
 }
 ```
 
-- **`semantic_search(query, filters?)`** → the standard `SearchResult` with an empty `answer` and ranked `sources` (the verbose per-phase `trace` is stripped; the lightweight `cost` summary is kept). Hybrid vector + FTS retrieval; best for natural-language questions.
-- **`keyword_search(query?, filters?, limit=20, offset=0)`** → `{ documents: [{ document_id, title, correspondent, document_type, created, snippet, paperless_url }], total, offset, limit }`. With `query` it ranks by FTS (BM25) relevance and `snippet` is the best-matching excerpt; omit `query` for a filter-only browse (recency order, `snippet: null`). `limit` is clamped to 1–50, `offset` ≥ 0.
+- **`semantic_search(query, filters?)`** → the standard `SearchResult` with an empty `answer` and ranked `sources`, each carrying its `tag_ids` (`null` when the document is no longer in the index) so a caller can verify its scope (the verbose per-phase `trace` is stripped; the lightweight `cost` summary is kept). Hybrid vector + FTS retrieval; best for natural-language questions.
+- **`keyword_search(query?, filters?, limit=20, offset=0)`** → `{ documents: [{ document_id, title, correspondent, document_type, created, tag_ids, snippet, paperless_url }], total, offset, limit }`. With `query` it ranks by FTS (BM25) relevance and `snippet` is the best-matching excerpt; omit `query` for a filter-only browse (recency order, `snippet: null`). `limit` is clamped to 1–50, `offset` ≥ 0.
 - **`fetch_documents(document_ids)`** → `{ documents: [{ document_id, title, page_count, paperless_url, content, truncated, total_chars, returned_chars, error }] }`. 1–5 ids per call (empty or > 5 is rejected). `content` is the full OCR text capped at 50000 characters — when cut, `truncated` is `true` with `total_chars`/`returned_chars`. An unknown or deleted id yields `error: "not found"` for that entry without failing the rest of the batch.
 - **`list_filters()`** → `{ correspondents: [{ id, name, count }], document_types: [...], tags: [...], date_range: { earliest, latest } }`. Call it first to discover valid filter ids.
 - **`deep_search(question, filters?)`** → the full `SearchResult` including a synthesised `answer` and its `sources`. **The only billed tool**: every call spends the archive owner's LLM budget and counts against `SEARCH_KEY_DAILY_TOKEN_QUOTA`.
