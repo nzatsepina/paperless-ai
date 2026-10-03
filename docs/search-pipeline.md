@@ -974,4 +974,4 @@ decision to the stage that reads the evidence is more reliable.
 | `refinement.py` | `broaden_plan` / `merge_chunks` / `trivial_plan` — the pure helpers behind broaden, refine, and the trivial-query skip |
 | `prompts.py` | The planner, judge, and synthesiser system prompts and user-message builders |
 | `models.py` | The pipeline's data types — `RetrievalPlan`, `RetrievalSpec`, `RetrievedChunk`, `JudgeVerdict`, `SearchResult`, … |
-| `store/reader/_filters.py` | `build_filters` — translates resolved filters (including the `date()`-wrapped date bounds) into SQL |
+| `store/reader/_filters.py` | `build_filters` — translates resolved filters into SQL (date bounds as a half-open range on the plain `d.created` column) |

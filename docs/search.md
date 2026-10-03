@@ -205,7 +205,7 @@ The MCP endpoint lets an AI agent treat your archive as a tool. It uses the `Fas
 
 Recommended flow: call `list_filters` once to learn the valid ids → `semantic_search` for a natural-language question or `keyword_search` for exact terms / enumeration → `fetch_documents` to read a whole document → `deep_search` only when the agent genuinely cannot answer from the sources itself.
 
-**Filters.** Every search tool takes the same optional, **ID-based** `filters` object (discover the ids with `list_filters`; there is no name resolution at this boundary). The filters are a **hard scope**: no server path relaxes them, and several `tag_ids` mean a document must carry all of them. A malformed filter is rejected with a clear error rather than ignored — an unknown key, a mis-spelled `filters` argument, a date that is not `YYYY-MM-DD` (or an ISO-8601 timestamp, stored as its date), an explicitly empty `tag_ids`, or an id that is not a positive integer — as a tool error over MCP and HTTP 422 over the HTTP API:
+**Filters.** Every search tool takes the same optional, **ID-based** `filters` object (discover the ids with `list_filters`; there is no name resolution at this boundary). The filters are a **hard scope**: no server path relaxes them, and several `tag_ids` mean a document must carry all of them. A malformed filter is rejected with a clear error rather than ignored — an unknown key, a mis-spelled `filters` argument, a date that is not `YYYY-MM-DD` (or an ISO-8601 timestamp, stored as its date), an explicitly empty `tag_ids`, more than 64 `tag_ids`, the date 9999-12-31, or an id that is not a positive integer — as a tool error over MCP and HTTP 422 over the HTTP API:
 
 ```json
 {
