@@ -390,3 +390,8 @@ Rejected: a per-site fix without a choke point; keeping the old semantics
 for the web UI; an MCP-only empty-`tag_ids` rule; making `tag_ids` optional in the SPA's UI state.
 **Spec:** `.claude/specs/20261002-caller-scope-hard.md`
 **Affects:** `src/search/retriever.py`, `src/search/core.py`, `src/search/wire/search.py`, `src/search/mcp_server.py`, `src/store/models.py`, `src/store/reader/_lookups.py`, `src/store/reader/_browse.py`, `src/search/models.py`, `src/search/sources.py`, `web/src/api/client/search.ts`, `web/src/api/client/searchStream.ts`, `docs/search-pipeline.md`
+
+## 2026-10-03 — Caller-scope filter bounds (follow-up)
+**Decision:** `FilterRequest` additionally rejects more than 64 `tag_ids` (matches the GET `/api/documents` cap), ids above 2**63-1 (SQLite INTEGER range) and the date 9999-12-31. **Why:** `date_to` + 1 day overflows at 9999-12-31 and an unbindable id would error inside the store instead of failing closed at the boundary. Docs (`docs/search.md`, `docs/search-pipeline.md`, `docs/store.md`) now describe the half-open `d.created` date range and `tag_ids` on results.
+**Spec:** `.claude/specs/20261002-caller-scope-hard.md`
+**Affects:** `src/search/wire/search.py`, `docs/search.md`, `docs/search-pipeline.md`, `docs/store.md`
